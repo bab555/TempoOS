@@ -1,0 +1,19 @@
+name: procurement_flow
+description: "Complete procurement: sourcing → quoting → contracting → finance"
+states: [sourcing, sourcing_done, quoting, quoting_done, contracting, contract_done, finance, end]
+initial_state: sourcing
+state_node_map:
+  sourcing:    builtin://sourcing
+  quoting:     builtin://quoting
+  contracting: builtin://doc_writer
+  finance:     builtin://finance
+user_input_states: [sourcing_done, quoting_done, contract_done]
+transitions:
+  - { from: sourcing,      event: STEP_DONE,    to: sourcing_done }
+  - { from: sourcing_done, event: USER_CONFIRM, to: quoting }
+  - { from: sourcing_done, event: USER_SKIP,    to: contracting }
+  - { from: quoting,       event: STEP_DONE,    to: quoting_done }
+  - { from: quoting_done,  event: USER_CONFIRM, to: contracting }
+  - { from: contracting,   event: STEP_DONE,    to: contract_done }
+  - { from: contract_done, event: USER_CONFIRM, to: finance }
+  - { from: finance,       event: STEP_DONE,    to: end }

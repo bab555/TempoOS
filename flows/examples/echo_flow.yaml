@@ -1,0 +1,10 @@
+name: echo_test_flow
+description: "Simple echo test: execute → wait for confirm → done"
+states: [start, echoed, end]
+initial_state: start
+state_node_map:
+  start: builtin://echo
+transitions:
+  - { from: start, event: STEP_DONE, to: echoed }
+  - { from: echoed, event: USER_CONFIRM, to: end }
+user_input_states: [echoed]
