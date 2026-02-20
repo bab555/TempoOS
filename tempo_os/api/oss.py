@@ -95,7 +95,7 @@ async def oss_post_signature(
     policy_b64 = base64.b64encode(policy_json).decode("utf-8")
 
     signature = base64.b64encode(
-        hmac.new(
+        hmac.HMAC(
             settings.OSS_ACCESS_KEY_SECRET.encode("utf-8"),
             policy_b64.encode("utf-8"),
             hashlib.sha1,

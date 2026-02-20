@@ -29,12 +29,16 @@ def mock_redis():
     from tempo_os.nodes.transform import TransformNode
     from tempo_os.nodes.http_request import HTTPRequestNode
     from tempo_os.nodes.notification import NotificationNode
+    from tempo_os.nodes.search import SearchNode
+    from tempo_os.nodes.writer import WriterNode
 
     ctx.node_registry.register_builtin("echo", EchoNode())
     ctx.node_registry.register_builtin("conditional", ConditionalNode())
     ctx.node_registry.register_builtin("transform", TransformNode())
     ctx.node_registry.register_builtin("http_request", HTTPRequestNode())
     ctx.node_registry.register_builtin("notification", NotificationNode())
+    ctx.node_registry.register_builtin("search", SearchNode())
+    ctx.node_registry.register_builtin("writer", WriterNode())
 
     # Load example flows
     from pathlib import Path

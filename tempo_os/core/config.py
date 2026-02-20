@@ -39,8 +39,8 @@ class TempoSettings(BaseSettings):
         description="Default LLM model (central controller)",
     )
     DASHSCOPE_SEARCH_MODEL: str = Field(
-        default="qwen3.5-plus",
-        description="Model for web search (with enable_search + vision capability)",
+        default="qwen-max",
+        description="Model for web search (enable_search, text-generation API)",
     )
     DASHSCOPE_VL_MODEL: str = Field(
         default="qwen3.5-plus",

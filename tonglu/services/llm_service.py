@@ -41,7 +41,7 @@ class LLMService:
         self,
         api_key: str,
         default_model: str = "qwen-plus",
-        embedding_model: str = "text-embedding-v3",
+        embedding_model: str = "text-embedding-v4",
     ) -> None:
         self.api_key = api_key
         self.default_model = default_model
@@ -102,7 +102,7 @@ class LLMService:
         model: Optional[str] = None,
     ) -> List[List[float]]:
         """
-        文本向量化。
+        文本向量化，带重试。
 
         Uses asyncio.to_thread to avoid blocking the event loop,
         since dashscope.TextEmbedding.call() is synchronous.
@@ -124,7 +124,25 @@ class LLMService:
                 for item in response.output["embeddings"]
             ]
 
-        return await asyncio.to_thread(_sync_embed)
+        last_error: Optional[Exception] = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return await asyncio.to_thread(_sync_embed)
+            except Exception as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "Embedding call failed (attempt %d/%d, model=%s): %s. "
+                        "Retrying in %ds...",
+                        attempt + 1, self.MAX_RETRIES, model, e, wait,
+                    )
+                    await asyncio.sleep(wait)
+
+        raise RuntimeError(
+            f"Embedding call failed after {self.MAX_RETRIES} attempts "
+            f"(model={model}): {last_error}"
+        ) from last_error
 
     # ── Internal ──────────────────────────────────────────────
 

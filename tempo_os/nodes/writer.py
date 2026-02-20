@@ -185,14 +185,17 @@ class WriterNode(BaseNode):
         )
 
 
+_WRITER_MAX_RETRIES = 3
+
+
 async def _writer_call(
     api_key: str,
     model: str,
     messages: List[Dict[str, Any]],
 ) -> Optional[str]:
-    """Call DashScope Generation API for document writing."""
+    """Call DashScope Generation API for document writing with retry."""
 
-    def _sync_call() -> Optional[str]:
+    def _sync_call() -> str:
         response = dashscope.Generation.call(
             model=model,
             messages=messages,
@@ -200,11 +203,27 @@ async def _writer_call(
             result_format="message",
         )
         if response.status_code != 200:
-            logger.error("DashScope writer error: %s - %s", response.code, response.message)
-            return None
+            raise RuntimeError(
+                f"DashScope writer error: {response.code} - {response.message}"
+            )
         return response.output.choices[0].message.content
 
-    return await asyncio.to_thread(_sync_call)
+    last_error: Optional[Exception] = None
+    for attempt in range(_WRITER_MAX_RETRIES):
+        try:
+            return await asyncio.to_thread(_sync_call)
+        except Exception as e:
+            last_error = e
+            if attempt < _WRITER_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logger.warning(
+                    "Writer call failed (attempt %d/%d): %s. Retrying in %ds...",
+                    attempt + 1, _WRITER_MAX_RETRIES, e, wait,
+                )
+                await asyncio.sleep(wait)
+
+    logger.error("Writer call failed after %d attempts: %s", _WRITER_MAX_RETRIES, last_error)
+    raise RuntimeError(f"撰写调用失败 (重试{_WRITER_MAX_RETRIES}次后): {last_error}") from last_error
 
 
 def _parse_writer_output(content: str, skill_key: str) -> Dict[str, Any]:

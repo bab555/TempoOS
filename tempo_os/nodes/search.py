@@ -3,7 +3,7 @@
 """
 SearchNode — Web search via DashScope enable_search capability.
 
-Uses qwen3-max with enable_search=True and search_options to perform
+Uses qwen-max with enable_search=True and search_options to perform
 real-time web searches. The LLM generates a coherent answer while
 the search results (titles, URLs) are captured separately for citation.
 
@@ -133,6 +133,9 @@ class SearchNode(BaseNode):
         )
 
 
+_SEARCH_MAX_RETRIES = 3
+
+
 async def _search_call(
     api_key: str,
     model: str,
@@ -141,15 +144,10 @@ async def _search_call(
 ) -> Optional[Dict[str, Any]]:
     """
     Call DashScope Generation API with enable_search=True.
-
-    search_strategy options (from DashScope docs):
-      - "turbo": fast, basic search
-      - "max": comprehensive search with more sources
-      - "agent": multi-step retrieval with fact verification
-      - "agent_max": most thorough, multi-round + verification
+    Retries up to _SEARCH_MAX_RETRIES times with exponential backoff.
     """
 
-    def _sync_call() -> Optional[Dict[str, Any]]:
+    def _sync_call() -> Dict[str, Any]:
         response = dashscope.Generation.call(
             model=model,
             messages=messages,
@@ -163,15 +161,15 @@ async def _search_call(
         )
 
         if response.status_code != 200:
-            logger.error("DashScope search error: %s - %s", response.code, response.message)
-            return None
+            raise RuntimeError(
+                f"DashScope search error: {response.code} - {response.message}"
+            )
 
         choice = response.output.choices[0].message
         result: Dict[str, Any] = {
             "content": getattr(choice, "content", "") or "",
         }
 
-        # Capture search references
         search_info = getattr(response.output, "search_info", None)
         if search_info and hasattr(search_info, "search_results"):
             result["search_results"] = [
@@ -185,7 +183,22 @@ async def _search_call(
 
         return result
 
-    return await asyncio.to_thread(_sync_call)
+    last_error: Optional[Exception] = None
+    for attempt in range(_SEARCH_MAX_RETRIES):
+        try:
+            return await asyncio.to_thread(_sync_call)
+        except Exception as e:
+            last_error = e
+            if attempt < _SEARCH_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logger.warning(
+                    "Search call failed (attempt %d/%d): %s. Retrying in %ds...",
+                    attempt + 1, _SEARCH_MAX_RETRIES, e, wait,
+                )
+                await asyncio.sleep(wait)
+
+    logger.error("Search call failed after %d attempts: %s", _SEARCH_MAX_RETRIES, last_error)
+    raise RuntimeError(f"搜索调用失败 (重试{_SEARCH_MAX_RETRIES}次后): {last_error}") from last_error
 
 
 def _parse_search_result(

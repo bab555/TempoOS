@@ -537,6 +537,9 @@ async def _process_files_via_event_bus(
     return result
 
 
+_LLM_MAX_RETRIES = 3
+
+
 async def _call_llm(
     api_key: str,
     model: str,
@@ -546,19 +549,15 @@ async def _call_llm(
     search_options: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Call DashScope Generation API.
+    Call DashScope Generation API with retry on transient failures.
 
-    Aligns with DashScope SDK (dashscope.Generation.call):
-      - model: qwen3-max / qwen3.5-plus / etc.
-      - result_format: "message" (OpenAI-compatible)
-      - enable_search: True to enable web search
-      - search_options: {"search_strategy": "max", "enable_source": True}
-      - tools: function calling definitions
+    Retries up to _LLM_MAX_RETRIES times with exponential backoff (1s, 2s, 4s)
+    for network errors (SSL, timeout, connection reset).
 
     Returns dict with 'content', optional 'tool_calls', and optional 'search_results'.
     """
 
-    def _sync_call() -> Optional[Dict[str, Any]]:
+    def _sync_call() -> Dict[str, Any]:
         import dashscope
 
         kwargs: Dict[str, Any] = {
@@ -576,8 +575,9 @@ async def _call_llm(
 
         response = dashscope.Generation.call(**kwargs)
         if response.status_code != 200:
-            logger.error("DashScope error: %s - %s", response.code, response.message)
-            return None
+            raise RuntimeError(
+                f"DashScope error: {response.code} - {response.message}"
+            )
 
         choice = response.output.choices[0].message
         result: Dict[str, Any] = {
@@ -597,7 +597,6 @@ async def _call_llm(
                 for tc in choice.tool_calls
             ]
 
-        # Capture search results if available
         search_info = getattr(response.output, "search_info", None)
         if search_info and hasattr(search_info, "search_results"):
             result["search_results"] = [
@@ -611,7 +610,22 @@ async def _call_llm(
 
         return result
 
-    return await asyncio.to_thread(_sync_call)
+    last_error: Optional[Exception] = None
+    for attempt in range(_LLM_MAX_RETRIES):
+        try:
+            return await asyncio.to_thread(_sync_call)
+        except Exception as e:
+            last_error = e
+            if attempt < _LLM_MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                logger.warning(
+                    "LLM call failed (attempt %d/%d, model=%s): %s. Retrying in %ds...",
+                    attempt + 1, _LLM_MAX_RETRIES, model, e, wait,
+                )
+                await asyncio.sleep(wait)
+
+    logger.error("LLM call failed after %d attempts: %s", _LLM_MAX_RETRIES, last_error)
+    return None
 
 
 def _chunk_text(text: str, chunk_size: int = 4) -> List[str]:

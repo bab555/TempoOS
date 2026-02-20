@@ -50,7 +50,7 @@ class TongluSettings(BaseSettings):
         description="Default LLM model for extraction/summarization",
     )
     DASHSCOPE_EMBEDDING_MODEL: str = Field(
-        default="text-embedding-v3",
+        default="text-embedding-v4",
         description="Embedding model name",
     )
     DASHSCOPE_VL_MODEL: str = Field(
@@ -101,3 +101,14 @@ class TongluSettings(BaseSettings):
         "case_sensitive": True,
         "extra": "ignore",  # Ignore TempoOS vars in shared .env
     }
+
+
+_settings_singleton: TongluSettings | None = None
+
+
+def get_settings() -> TongluSettings:
+    """Return a cached TongluSettings singleton."""
+    global _settings_singleton
+    if _settings_singleton is None:
+        _settings_singleton = TongluSettings()
+    return _settings_singleton

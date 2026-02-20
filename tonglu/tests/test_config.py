@@ -16,7 +16,7 @@ class TestTongluSettings:
         assert s.HOST == "0.0.0.0"
         assert s.PORT == 8100
         assert s.DASHSCOPE_DEFAULT_MODEL == "qwen-plus"
-        assert s.DASHSCOPE_EMBEDDING_MODEL == "text-embedding-v3"
+        assert s.DASHSCOPE_EMBEDDING_MODEL == "text-embedding-v4"
         assert s.INGESTION_MAX_CONCURRENT == 20
         assert s.EVENT_SINK_ENABLED is True
 

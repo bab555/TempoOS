@@ -6,7 +6,7 @@ from tempo_os.core.config import TempoSettings
 
 class TestTempoSettings:
     def test_defaults(self):
-        s = TempoSettings(DASHSCOPE_API_KEY="test-key")
+        s = TempoSettings(_env_file=None, DASHSCOPE_API_KEY="test-key")
         assert s.REDIS_URL == "redis://localhost:6379/0"
         assert "postgresql" in s.DATABASE_URL
         assert s.LOG_LEVEL == "INFO"
@@ -17,6 +17,7 @@ class TestTempoSettings:
 
     def test_custom_values(self):
         s = TempoSettings(
+            _env_file=None,
             REDIS_URL="redis://custom:6380/1",
             DASHSCOPE_API_KEY="sk-test",
             DASHSCOPE_MODEL="qwen-plus",

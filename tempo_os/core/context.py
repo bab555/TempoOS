@@ -8,9 +8,12 @@ Initialized at startup, injected into API routes via FastAPI Depends.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
+
+logger = logging.getLogger("tempo.context")
 
 from tempo_os.kernel.bus import RedisBus
 from tempo_os.kernel.node_registry import NodeRegistry
@@ -97,30 +100,41 @@ class PlatformContext:
             return NodeResult(status="error", error_message=f"Node not found: {node_ref}")
 
         if isinstance(node_or_wh, BaseNode):
-            # Builtin execution
             node_id = node_or_wh.node_id
             platform_metrics.inc(f"node_exec:{node_id}")
 
             bb = self.get_blackboard(tenant_id)
             start = time.time()
+            last_error: Optional[Exception] = None
 
-            try:
-                result = await node_or_wh.execute(session_id, tenant_id, params, bb)
-                elapsed = (time.time() - start) * 1000
-                platform_metrics.observe(f"node_latency:{node_id}", elapsed)
+            for attempt in range(1, self.retry_manager.policy.max_attempts + 1):
+                try:
+                    result = await node_or_wh.execute(session_id, tenant_id, params, bb)
+                    elapsed = (time.time() - start) * 1000
+                    platform_metrics.observe(f"node_latency:{node_id}", elapsed)
 
-                # Write artifacts to Blackboard
-                for key, value in result.artifacts.items():
-                    if isinstance(value, dict):
-                        await bb.push_artifact(session_id, key, value)
+                    for key, value in result.artifacts.items():
+                        if isinstance(value, dict):
+                            await bb.push_artifact(session_id, key, value)
+                        else:
+                            await bb.push_artifact(session_id, key, {"value": value})
+
+                    if attempt > 1:
+                        logger.info("Node %s succeeded on attempt %d", node_id, attempt)
+                    return result
+
+                except Exception as e:
+                    last_error = e
+                    decision = await self.retry_manager.handle_node_error(
+                        session_id, node_id, attempt, e,
+                    )
+                    if decision == "retry":
+                        await self.retry_manager.wait_before_retry(attempt)
                     else:
-                        await bb.push_artifact(session_id, key, {"value": value})
+                        break
 
-                return result
-
-            except Exception as e:
-                platform_metrics.inc(f"node_error:{node_id}")
-                return NodeResult(status="error", error_message=str(e))
+            platform_metrics.inc(f"node_error:{node_id}")
+            return NodeResult(status="error", error_message=str(last_error))
         else:
             # Webhook — placeholder, will use WebhookCaller
             return NodeResult(

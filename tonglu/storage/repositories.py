@@ -133,19 +133,18 @@ class DataRepository:
         Uses pgvector's <=> operator for cosine distance.
         """
         async with self._session_factory() as session:
-            # Build embedding literal for pgvector
             embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
 
             stmt = text("""
                 SELECT r.id, r.tenant_id, r.schema_type, r.data, r.summary,
                        r.status, r.created_at,
                        v.chunk_content,
-                       (v.embedding <=> :embedding::vector) AS distance
+                       (v.embedding <=> CAST(:embedding AS vector)) AS distance
                 FROM tl_data_vectors v
                 JOIN tl_data_records r ON r.id = v.record_id
                 WHERE r.tenant_id = :tenant_id
                   AND r.status = 'ready'
-                ORDER BY v.embedding <=> :embedding::vector
+                ORDER BY v.embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
             """)
 
