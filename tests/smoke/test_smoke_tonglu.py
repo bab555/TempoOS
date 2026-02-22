@@ -46,8 +46,34 @@ async def _make_db():
     return db
 
 
+def _pg_available() -> bool:
+    """Quick check if PG is reachable (sync, for skipif).
+
+    Parses host/port from DATABASE_URL so it works with non-default ports
+    like 15432.
+    """
+    import socket
+    from urllib.parse import urlparse
+    parsed = urlparse(_settings.DATABASE_URL.replace("+asyncpg", ""))
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 5432
+    try:
+        s = socket.create_connection((host, port), timeout=2)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+_skip_no_pg = pytest.mark.skipif(
+    not _pg_available(),
+    reason=f"PostgreSQL not reachable (parsed from DATABASE_URL)",
+)
+
+
 # ── 1. Database ───────────────────────────────────────────────
 
+@_skip_no_pg
 class TestDatabase:
     @pytest.mark.asyncio
     async def test_tables_created(self):
@@ -65,6 +91,57 @@ class TestDatabase:
             assert "tl_data_records" in tables
             assert "tl_data_vectors" in tables
             assert "tl_data_lineage" in tables
+            assert "tl_session_snapshots" in tables, (
+                "tl_session_snapshots table missing — run scripts/init_db.sql"
+            )
+        finally:
+            await db.close()
+
+    @pytest.mark.asyncio
+    async def test_session_snapshot_crud(self):
+        """Verify SessionSnapshot CRUD via DataRepository."""
+        from tonglu.storage.models import SessionSnapshot
+        from datetime import datetime, timezone
+
+        db = await _make_db()
+        try:
+            repo = DataRepository(db.session_factory)
+            snap_session = f"snap_smoke_{uuid.uuid4().hex[:6]}"
+
+            # save
+            snapshot = SessionSnapshot(
+                session_id=snap_session,
+                tenant_id=TENANT,
+                chat_history=[{"role": "user", "content": "hello"}],
+                blackboard={"key": "value"},
+                tool_results={"search": [{"q": "test"}]},
+                chat_summary="summary text",
+                routed_scene="general",
+                archived_at=datetime.now(timezone.utc),
+            )
+            await repo.save_snapshot(snapshot)
+
+            # get
+            snap = await repo.get_snapshot(snap_session)
+            assert snap is not None
+            assert snap.tenant_id == TENANT
+            assert snap.chat_history == [{"role": "user", "content": "hello"}]
+            assert snap.blackboard == {"key": "value"}
+            assert snap.chat_summary == "summary text"
+            assert snap.routed_scene == "general"
+            print(f"\n--- SessionSnapshot saved & retrieved: {snap_session} ---")
+
+            # mark restored
+            await repo.mark_snapshot_restored(snap_session)
+            snap2 = await repo.get_snapshot(snap_session)
+            assert snap2.restored_at is not None
+            print(f"  restored_at: {snap2.restored_at}")
+
+            # delete
+            await repo.delete_snapshot(snap_session)
+            snap3 = await repo.get_snapshot(snap_session)
+            assert snap3 is None
+            print(f"  Deleted successfully")
         finally:
             await db.close()
 
@@ -177,6 +254,7 @@ class TestParserRegistry:
 
 # ── 4. Ingestion Pipeline ────────────────────────────────────
 
+@_skip_no_pg
 class TestIngestionPipeline:
     @pytest.mark.asyncio
     async def test_text_ingestion(self):
@@ -271,6 +349,7 @@ class TestIngestionPipeline:
 
 # ── 5. Query Engine ──────────────────────────────────────────
 
+@_skip_no_pg
 class TestQueryEngine:
     @pytest.mark.asyncio
     async def test_sql_query(self):
@@ -343,6 +422,7 @@ class TestQueryEngine:
 
 # ── 6. Event Sink (real pipeline) ────────────────────────────
 
+@_skip_no_pg
 class TestEventSinkReal:
     @pytest.mark.asyncio
     async def test_file_uploaded_with_real_pipeline(self):
@@ -404,5 +484,94 @@ class TestEventSinkReal:
             await pubsub.unsubscribe()
             await pubsub.aclose()
             await redis.aclose()
+        finally:
+            await db.close()
+
+
+# ── 7. Session Evictor (archive + restore round-trip with real PG) ────
+
+@_skip_no_pg
+class TestSessionEvictorSmoke:
+    @pytest.mark.asyncio
+    async def test_archive_and_restore_roundtrip(self):
+        """Full round-trip: populate Redis -> archive to PG -> clear Redis -> restore from PG."""
+        import fakeredis.aioredis
+        from tempo_os.memory.blackboard import TenantBlackboard
+        from tempo_os.memory.chat_store import ChatStore, ChatMessage
+        from tonglu.services.session_evictor import SessionEvictor
+
+        db = await _make_db()
+        try:
+            repo = DataRepository(db.session_factory)
+            redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+            tenant = f"evictor_smoke_{uuid.uuid4().hex[:4]}"
+            session = f"sess_{uuid.uuid4().hex[:6]}"
+
+            bb = TenantBlackboard(redis, tenant, session_ttl=1800)
+            chat = ChatStore(redis, tenant, ttl=3600)
+
+            # Populate Redis
+            await bb.set_state(session, "project_name", "Smoke Test Project")
+            await bb.set_state(session, "_routed_scene", "procurement")
+            await chat.append(session, ChatMessage(role="user", content="Hello"))
+            await chat.append(session, ChatMessage(role="assistant", content="Hi there!"))
+            await bb.append_result(session, "search", {"q": "laptop", "results": 5})
+
+            evictor = SessionEvictor(
+                redis_url="redis://fake",
+                repo=repo,
+                tenant_ids=[tenant],
+                scan_interval=60,
+                ttl_threshold=300,
+            )
+            evictor._redis = redis
+
+            # Archive
+            archived = await evictor.archive_session(tenant, session)
+            assert archived, "archive_session returned False"
+            print(f"\n--- Archived session {session[:8]}... ---")
+
+            # Verify PG snapshot
+            snap = await repo.get_snapshot(session)
+            assert snap is not None
+            assert snap.tenant_id == tenant
+            assert len(snap.chat_history) == 2
+            assert snap.blackboard["project_name"] == "Smoke Test Project"
+            assert snap.routed_scene == "procurement"
+            print(f"  PG snapshot: chat={len(snap.chat_history)}, bb keys={list(snap.blackboard.keys())}")
+
+            # Clear Redis (simulate expiration)
+            from tempo_os.kernel.namespace import get_key, get_chat_key
+            await redis.delete(get_key(tenant, "session", session))
+            await redis.delete(get_chat_key(tenant, session))
+
+            # Verify Redis is empty
+            assert await chat.count(session) == 0
+            assert await bb.get_state(session) == {}
+
+            # Restore
+            restored = await evictor.restore_session(
+                tenant, session, session_ttl=1800, chat_ttl=3600
+            )
+            assert restored, "restore_session returned False"
+            print(f"  Restored from PG")
+
+            # Verify Redis repopulated
+            count = await chat.count(session)
+            assert count == 2, f"Expected 2 chat messages, got {count}"
+            bb_state = await bb.get_state(session)
+            assert bb_state.get("project_name") == "Smoke Test Project"
+            assert bb_state.get("_routed_scene") == "procurement"
+            print(f"  Redis: chat={count}, bb keys={list(bb_state.keys())}")
+
+            # Verify PG marked as restored
+            snap2 = await repo.get_snapshot(session)
+            assert snap2.restored_at is not None
+            print(f"  PG restored_at: {snap2.restored_at}")
+
+            # Cleanup
+            await repo.delete_snapshot(session)
+            await redis.aclose()
+            print("  *** EVICTOR ROUND-TRIP PASSED ***")
         finally:
             await db.close()

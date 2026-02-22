@@ -9,6 +9,19 @@ a central controller that decides whether to:
   - Invoke a tool/node (backend execution, then push UI result)
   - Request more information from the user
 
+Key architectural features:
+  1. **Prompt Routing** — A lightweight LLM call classifies user intent
+     into a scene (procurement, document_writing, data_analysis, general),
+     then loads the corresponding system prompt and tool set from .md files.
+     Routing results are cached per-session to avoid redundant LLM calls.
+  2. **ReAct Loop** — The LLM can call tools multiple times in sequence
+     (e.g. search → data_query → writer) without returning to the user
+     between steps. The loop continues until the LLM produces a final
+     text response with no tool calls, or a safety limit is reached.
+  3. **Backend Chat History** — All messages are persisted in ChatStore
+     (Redis List). The ContextBuilder reads from ChatStore to construct
+     LLM context with V1 trim and V2 LLM summary for long conversations.
+
 All output is streamed via Server-Sent Events (SSE) with distinct event
 types so the frontend can route content to the correct UI region:
   - event: message     → left-side conversation bubble (streamed text)
@@ -40,10 +53,19 @@ from tempo_os.core.context import get_platform_context
 from tempo_os.core.tenant import TenantContext
 from tempo_os.protocols.events import FILE_UPLOADED, FILE_READY
 from tempo_os.protocols.schema import TempoEvent
+from tempo_os.agents.prompt_loader import (
+    get_scene_config,
+    route_intent,
+    DEFAULT_SCENE,
+)
+from tempo_os.memory.chat_store import ChatMessage, ChatStore
+from tempo_os.memory.context_builder import ContextBuilder
 
 logger = logging.getLogger("tempo.api.agent")
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+MAX_REACT_ROUNDS = 8
 
 
 # ── Request / Response Models ────────────────────────────────
@@ -70,89 +92,6 @@ class AgentChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = Field(None, description="Optional frontend context (current_page, etc.)")
 
 
-# ── Tool Definitions (for LLM Function Calling) ─────────────
-
-
-AGENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": "联网搜索：在全网搜索产品信息、价格、供应商等外部数据",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "搜索关键词或自然语言查询",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "writer",
-            "description": "智能撰写：生成报价表、合同、送货单、财务报表等业务文档",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "skill": {
-                        "type": "string",
-                        "enum": ["quotation", "contract", "delivery_note", "financial_report", "comparison", "general"],
-                        "description": "撰写技能类型",
-                    },
-                    "data": {
-                        "type": "object",
-                        "description": "业务数据（如报价清单、合同信息等）",
-                    },
-                    "template_id": {
-                        "type": "string",
-                        "description": "模板记录 ID（用户上传的模板）",
-                    },
-                },
-                "required": ["skill"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "data_query",
-            "description": "内部数据查询：从企业知识库中检索合同、发票、商品等内部数据",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "intent": {
-                        "type": "string",
-                        "description": "查询意图（自然语言）",
-                    },
-                },
-                "required": ["intent"],
-            },
-        },
-    },
-]
-
-
-# ── System Prompt ────────────────────────────────────────────
-
-SYSTEM_PROMPT = """你是"数字员工助手"，一个专业的企业办公AI助手。你的核心能力包括：
-
-1. **联网搜索 (search)**：在全网搜索产品信息、价格、供应商数据，生成比价表。
-2. **智能撰写 (writer)**：根据数据和模板生成报价表、采购合同、送货单、财务报表等业务文档。
-3. **内部数据查询 (data_query)**：从企业知识库中检索历史合同、发票、商品 SKU 等内部数据。
-
-工作原则：
-- 用户的需求可能需要你调用一个或多个工具来完成。
-- 先理解用户意图，必要时追问细节，然后选择合适的工具执行。
-- 执行完毕后，用简洁的语言总结结果。
-- 如果用户上传了文件，注意利用文件内容来辅助完成任务。
-"""
-
-
 # ── Endpoint ─────────────────────────────────────────────────
 
 
@@ -165,34 +104,113 @@ async def agent_chat(
     """
     Central Agent chat endpoint with SSE streaming.
 
-    This is the main entry point for all frontend interactions.
-    The LLM decides what tools to call based on user input.
+    Flow:
+      1. Persist user message to ChatStore
+      2. Route user intent → scene_key (cached per session)
+      3. Load scene prompt + tools
+      4. Build LLM context via ContextBuilder (V1 trim / V2 summary)
+      5. Pre-process uploaded files
+      6. Enter ReAct loop (LLM → tool calls → observe → repeat)
+      7. Persist assistant response to ChatStore
+      8. Stream final text response
     """
     session_id = req.session_id or str(uuid.uuid4())
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             ui_default_id = "panel_main"
-            # 1. Emit session init
             yield sse_event("session_init", {"session_id": session_id})
 
-            # 2. Pre-process files: send to Tonglu via EventBus, wait for text
             ctx = get_platform_context()
             bb = ctx.get_blackboard(tenant.tenant_id)
 
-            # Store session params in Blackboard for Node access
             await bb.set_state(session_id, "_tenant_id", tenant.tenant_id)
             if tenant.user_id:
                 await bb.set_state(session_id, "_user_id", tenant.user_id)
 
-            # Collect all files from the latest user message
+            from tempo_os.core.config import settings
+
+            if not settings.DASHSCOPE_API_KEY:
+                message_id = str(uuid.uuid4())
+                yield sse_event(
+                    "message",
+                    {
+                        "message_id": message_id, "seq": 1, "mode": "full",
+                        "role": "assistant",
+                        "content": "抱歉，LLM 服务未配置（缺少 DASHSCOPE_API_KEY）。请联系管理员。",
+                    },
+                )
+                yield sse_done(session_id)
+                return
+
+            # ── Initialize ChatStore & ContextBuilder ─────────
+            chat_store = ChatStore(
+                redis=ctx.redis,
+                tenant_id=tenant.tenant_id,
+                ttl=settings.CHAT_HISTORY_TTL,
+            )
+            context_builder = ContextBuilder(
+                chat_store=chat_store,
+                blackboard=bb,
+                max_recent_rounds=settings.LLM_CONTEXT_MAX_ROUNDS,
+                summary_threshold=settings.LLM_CONTEXT_SUMMARY_THRESHOLD,
+                summary_model=settings.DASHSCOPE_SUMMARY_MODEL,
+                api_key=settings.DASHSCOPE_API_KEY,
+            )
+
+            # ── Step 0.5: Restore from PG if session expired ──
+            if req.session_id:
+                existing_count = await chat_store.count(session_id)
+                if existing_count == 0:
+                    await _try_restore_session(
+                        tenant_id=tenant.tenant_id,
+                        session_id=session_id,
+                        tonglu_base_url=settings.TONGLU_BASE_URL,
+                        session_ttl=settings.SESSION_TTL,
+                        chat_ttl=settings.CHAT_HISTORY_TTL,
+                    )
+
+            # ── Step 1: Persist user message ──────────────────
+            latest_user_msg = _get_latest_user_message(req.messages)
             all_files = _collect_files(req.messages)
-            file_texts: Dict[str, str] = {}  # url -> parsed text
+
+            user_chat_msg = ChatMessage(
+                role="user",
+                content=latest_user_msg,
+                files=[{"name": f.name, "url": f.url, "type": f.type} for f in all_files] if all_files else None,
+            )
+            await chat_store.append(session_id, user_chat_msg)
+
+            # ── Step 2: Route intent (with session cache) ─────
+            yield sse_event(
+                "thinking",
+                {"content": "正在分析意图...", "phase": "route", "status": "running", "progress": 2},
+            )
+
+            scene_key = await _route_with_cache(
+                bb=bb,
+                session_id=session_id,
+                user_message=latest_user_msg,
+                api_key=settings.DASHSCOPE_API_KEY,
+                model=settings.DASHSCOPE_MODEL,
+            )
+
+            system_prompt, scene_tools = get_scene_config(scene_key)
+
+            yield sse_event(
+                "thinking",
+                {"content": "正在思考...", "phase": "plan", "status": "running", "progress": 5,
+                 "scene": scene_key},
+            )
+
+            # ── Step 3: Pre-process files ─────────────────────
+            file_texts: Dict[str, str] = {}
 
             if all_files:
                 yield sse_event(
                     "thinking",
-                    {"content": "正在处理上传文件...", "phase": "file_processing", "status": "running", "progress": 2},
+                    {"content": "正在处理上传文件...", "phase": "file_processing",
+                     "status": "running", "progress": 3},
                 )
                 file_texts = await _process_files_via_event_bus(
                     files=all_files,
@@ -203,78 +221,86 @@ async def agent_chat(
                     bb=bb,
                 )
 
-            # 3. Build messages for LLM (with file text content injected)
-            llm_messages = _build_llm_messages(req.messages, file_texts)
+            # ── Step 4: Build LLM context via ContextBuilder ──
+            llm_messages = await context_builder.build(session_id, system_prompt)
 
-            from tempo_os.core.config import settings
+            # Inject file texts into the latest user message if present
+            if file_texts:
+                _inject_file_texts(llm_messages, file_texts, all_files)
 
-            if not settings.DASHSCOPE_API_KEY:
-                message_id = str(uuid.uuid4())
-                yield sse_event(
-                    "message",
-                    {
-                        "message_id": message_id,
-                        "seq": 1,
-                        "mode": "full",
-                        "role": "assistant",
-                        "content": "抱歉，LLM 服务未配置（缺少 DASHSCOPE_API_KEY）。请联系管理员。",
-                    },
+            # ── Step 5: ReAct Loop ────────────────────────────
+            total_tool_calls = 0
+            assistant_content = ""
+
+            for react_round in range(MAX_REACT_ROUNDS):
+                response = await _call_llm(
+                    api_key=settings.DASHSCOPE_API_KEY,
+                    model=settings.DASHSCOPE_MODEL,
+                    messages=llm_messages,
+                    tools=scene_tools,
                 )
-                yield sse_done(session_id)
-                return
 
-            yield sse_event(
-                "thinking",
-                {"content": "正在思考...", "phase": "plan", "status": "running", "progress": 5},
-            )
+                if response is None:
+                    yield sse_error("LLM 调用失败")
+                    yield sse_done(session_id)
+                    return
 
-            # First LLM call (with tools)
-            response = await _call_llm(
-                api_key=settings.DASHSCOPE_API_KEY,
-                model=settings.DASHSCOPE_MODEL,
-                messages=llm_messages,
-                tools=AGENT_TOOLS,
-            )
+                content = response.get("content", "")
+                tool_calls = response.get("tool_calls", [])
 
-            if response is None:
-                yield sse_error("LLM 调用失败")
-                yield sse_done(session_id)
-                return
+                if not tool_calls:
+                    assistant_content = content or ""
+                    if assistant_content:
+                        message_id = str(uuid.uuid4())
+                        seq = 0
+                        for chunk in _chunk_text(assistant_content):
+                            seq += 1
+                            yield sse_event(
+                                "message",
+                                {
+                                    "message_id": message_id, "seq": seq,
+                                    "mode": "delta", "role": "assistant",
+                                    "content": chunk,
+                                },
+                            )
+                    # Persist immediately before break
+                    await chat_store.append(session_id, ChatMessage(
+                        role="assistant",
+                        content=assistant_content or "(completed)",
+                    ))
+                    break
 
-            content = response.get("content", "")
-            tool_calls = response.get("tool_calls", [])
-
-            # If LLM wants to call tools
-            if tool_calls:
                 for tc in tool_calls:
+                    total_tool_calls += 1
                     func_name = tc["function"]["name"]
-                    func_args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                    func_args = (
+                        json.loads(tc["function"]["arguments"])
+                        if isinstance(tc["function"]["arguments"], str)
+                        else tc["function"]["arguments"]
+                    )
                     run_id = str(uuid.uuid4())
                     tool_title = _tool_display_name(func_name)
+
+                    progress_base = min(10 + total_tool_calls * 15, 80)
 
                     yield sse_event(
                         "thinking",
                         {
                             "content": f"正在执行：{tool_title}...",
-                            "phase": "tool",
-                            "step": func_name,
-                            "status": "running",
-                            "progress": 10,
-                            "run_id": run_id,
+                            "phase": "tool", "step": func_name,
+                            "status": "running", "progress": progress_base,
+                            "run_id": run_id, "round": react_round + 1,
                         },
                     )
                     yield sse_event(
                         "tool_start",
                         {
-                            "run_id": run_id,
-                            "tool": func_name,
-                            "title": tool_title,
-                            "status": "running",
+                            "run_id": run_id, "tool": func_name,
+                            "title": tool_title, "status": "running",
                             "progress": 0,
                         },
                     )
 
-                    # Execute the corresponding Node
                     node_result = await ctx.execute_node(
                         node_ref=f"builtin://{func_name}",
                         session_id=session_id,
@@ -285,101 +311,103 @@ async def agent_chat(
                     yield sse_event(
                         "tool_done",
                         {
-                            "run_id": run_id,
-                            "tool": func_name,
-                            "title": tool_title,
-                            "status": node_result.status,
+                            "run_id": run_id, "tool": func_name,
+                            "title": tool_title, "status": node_result.status,
                             "progress": 100,
                         },
                     )
 
-                    # Push UI render if node produced ui_schema
                     if node_result.ui_schema:
                         yield sse_event(
                             "ui_render",
                             _enrich_ui_render(
                                 node_result.ui_schema,
-                                ui_id=ui_default_id,
-                                render_mode="replace",
-                                schema_version=1,
-                                run_id=run_id,
+                                ui_id=ui_default_id, render_mode="replace",
+                                schema_version=1, run_id=run_id,
                             ),
                         )
                     elif node_result.result:
-                        # Build a basic ui_render from result data
                         ui_data = _result_to_ui(func_name, node_result.result)
                         if ui_data:
                             yield sse_event(
                                 "ui_render",
                                 _enrich_ui_render(
                                     ui_data,
-                                    ui_id=ui_default_id,
-                                    render_mode="replace",
-                                    schema_version=1,
-                                    run_id=run_id,
+                                    ui_id=ui_default_id, render_mode="replace",
+                                    schema_version=1, run_id=run_id,
                                 ),
                             )
 
-                    # Feed tool result back to LLM for summary
-                    tool_result_text = json.dumps(node_result.result, ensure_ascii=False)[:2000]
-                    llm_messages.append({"role": "assistant", "content": "", "tool_calls": [tc]})
+                    tool_result_text = json.dumps(
+                        node_result.result, ensure_ascii=False,
+                    )[:4000]
+                    llm_messages.append({
+                        "role": "assistant", "content": content or "",
+                        "tool_calls": [tc],
+                    })
                     llm_messages.append({
                         "role": "tool",
                         "content": tool_result_text,
                         "name": func_name,
                     })
 
-                # Second LLM call: summarize tool results
+                    # Persist tool interaction to ChatStore
+                    await chat_store.append_batch(session_id, [
+                        ChatMessage(
+                            role="assistant",
+                            content=content or f"[调用工具: {func_name}]",
+                            msg_type="tool_call",
+                            tool_name=func_name,
+                        ),
+                        ChatMessage(
+                            role="tool",
+                            content=tool_result_text,
+                            msg_type="tool_result",
+                            tool_name=func_name,
+                            tool_call_id=tc.get("id"),
+                        ),
+                    ])
+
                 yield sse_event(
                     "thinking",
                     {
-                        "content": "正在整理结果...",
-                        "phase": "summarize",
-                        "status": "running",
-                        "progress": 85,
+                        "content": "正在继续思考...",
+                        "phase": "react", "status": "running",
+                        "progress": min(progress_base + 10, 90),
+                        "round": react_round + 2,
                     },
                 )
-                summary_response = await _call_llm(
-                    api_key=settings.DASHSCOPE_API_KEY,
-                    model=settings.DASHSCOPE_MODEL,
-                    messages=llm_messages,
-                    tools=None,
+
+            else:
+                assistant_content = "已完成所有工具调用，以上是执行结果。如需进一步操作请继续对话。"
+                logger.warning(
+                    "ReAct loop hit max rounds (%d) for session %s",
+                    MAX_REACT_ROUNDS, session_id,
                 )
-                if summary_response and summary_response.get("content"):
-                    # Stream the summary text
-                    message_id = str(uuid.uuid4())
-                    seq = 0
-                    for chunk in _chunk_text(summary_response["content"]):
-                        seq += 1
-                        yield sse_event(
-                            "message",
-                            {
-                                "message_id": message_id,
-                                "seq": seq,
-                                "mode": "delta",
-                                "role": "assistant",
-                                "content": chunk,
-                            },
-                        )
+                yield sse_event(
+                    "message",
+                    {
+                        "message_id": str(uuid.uuid4()), "seq": 1,
+                        "mode": "full", "role": "assistant",
+                        "content": assistant_content,
+                    },
+                )
 
-            elif content:
-                # No tool calls — pure text response
-                message_id = str(uuid.uuid4())
-                seq = 0
-                for chunk in _chunk_text(content):
-                    seq += 1
-                    yield sse_event(
-                        "message",
-                        {
-                            "message_id": message_id,
-                            "seq": seq,
-                            "mode": "delta",
-                            "role": "assistant",
-                            "content": chunk,
-                        },
-                    )
+            # ── Step 6: Persist assistant response ────────────
+            final_text = assistant_content or ""
+            if final_text:
+                await chat_store.append(session_id, ChatMessage(
+                    role="assistant",
+                    content=final_text,
+                ))
+            else:
+                # LLM returned empty content (edge case) — still persist
+                # a placeholder so multi-turn history stays consistent
+                await chat_store.append(session_id, ChatMessage(
+                    role="assistant",
+                    content="（已完成处理）",
+                ))
 
-            # Done
             yield sse_done(session_id)
 
         except Exception as exc:
@@ -408,8 +436,70 @@ async def agent_chat(
 # ── Internal Helpers ─────────────────────────────────────────
 
 
+async def _try_restore_session(
+    tenant_id: str,
+    session_id: str,
+    tonglu_base_url: str,
+    session_ttl: int = 1800,
+    chat_ttl: int = 86400,
+) -> bool:
+    """
+    Attempt to restore an expired session from Tonglu's PG snapshot.
+
+    Called when a request arrives with a session_id but ChatStore is empty
+    (session data expired from Redis). Makes an HTTP call to Tonglu's
+    /session/restore endpoint which reads the PG snapshot and writes
+    it back to Redis.
+
+    Returns True if restore succeeded, False otherwise.
+    """
+    import httpx
+
+    url = f"{tonglu_base_url.rstrip('/')}/session/restore"
+    payload = {
+        "tenant_id": tenant_id,
+        "session_id": session_id,
+        "session_ttl": session_ttl,
+        "chat_ttl": chat_ttl,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("restored"):
+                    logger.info(
+                        "Session restored from PG: tenant=%s session=%s",
+                        tenant_id, session_id,
+                    )
+                    return True
+                else:
+                    logger.debug(
+                        "No PG snapshot for session: tenant=%s session=%s",
+                        tenant_id, session_id,
+                    )
+            else:
+                logger.warning(
+                    "Tonglu restore call failed: status=%d body=%s",
+                    resp.status_code, resp.text[:200],
+                )
+    except Exception as e:
+        logger.warning("Tonglu restore call error: %s", e)
+
+    return False
+
+
+def _get_latest_user_message(messages: List[UserMessage]) -> str:
+    """Extract the text of the latest user message for routing."""
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content.strip():
+            return msg.content.strip()
+    return ""
+
+
 def _collect_files(messages: List[UserMessage]) -> List[FileRef]:
-    """Collect all file references from messages (typically just the latest)."""
+    """Collect all file references from messages."""
     files: List[FileRef] = []
     for msg in messages:
         if msg.role == "user" and msg.files:
@@ -417,19 +507,67 @@ def _collect_files(messages: List[UserMessage]) -> List[FileRef]:
     return files
 
 
+async def _route_with_cache(
+    bb: Any,
+    session_id: str,
+    user_message: str,
+    api_key: str,
+    model: str,
+) -> str:
+    """
+    Route intent with session-level caching.
+
+    On the first message of a session, perform LLM routing and cache the
+    result. Subsequent messages reuse the cached scene unless the user's
+    intent clearly shifts (detected by keyword heuristic).
+    """
+    cached_scene = await bb.get_state(session_id, "_routed_scene")
+    if cached_scene and isinstance(cached_scene, str) and cached_scene != DEFAULT_SCENE:
+        return cached_scene
+
+    scene_key = await route_intent(
+        user_message=user_message,
+        api_key=api_key,
+        model=model,
+    )
+    await bb.set_state(session_id, "_routed_scene", scene_key)
+    return scene_key
+
+
+def _inject_file_texts(
+    llm_messages: List[Dict[str, Any]],
+    file_texts: Dict[str, str],
+    files: List[FileRef],
+) -> None:
+    """Append file content to the last user message in llm_messages."""
+    for i in range(len(llm_messages) - 1, -1, -1):
+        if llm_messages[i].get("role") == "user":
+            parts: List[str] = []
+            for f in files:
+                text = file_texts.get(f.url)
+                if text:
+                    parts.append(f"[附件: {f.name}]\n{text}")
+                else:
+                    parts.append(f"[附件: {f.name}]（文件处理中或处理失败）")
+            if parts:
+                llm_messages[i]["content"] += "\n\n附件内容:\n" + "\n---\n".join(parts)
+            break
+
+
 def _build_llm_messages(
     messages: List[UserMessage],
+    system_prompt: str,
     file_texts: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Convert frontend messages to LLM-compatible format.
 
-    If file_texts is provided (url -> parsed text), inject the actual
-    file content into the message instead of just the URL.
+    Kept for backward compatibility; the primary path now uses
+    ContextBuilder.build() which reads from ChatStore.
     """
     file_texts = file_texts or {}
     llm_msgs: List[Dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
     ]
     for msg in messages:
         entry: Dict[str, Any] = {"role": msg.role, "content": msg.content}
@@ -463,9 +601,6 @@ async def _process_files_via_event_bus(
       2. Tonglu's EventSinkListener picks up the event, pulls from OSS,
          parses the file, and publishes FILE_READY with text content.
       3. This function subscribes and waits for all FILE_READY events.
-
-    Returns:
-        Dict mapping file URL to parsed text content.
     """
     if not files:
         return {}
@@ -477,7 +612,6 @@ async def _process_files_via_event_bus(
     bus = ctx.get_bus(tenant_id)
 
     async def _on_file_ready(event: TempoEvent) -> None:
-        """Handler for FILE_READY events."""
         if event.session_id != session_id:
             return
         url = event.payload.get("file_url", "")
@@ -488,14 +622,11 @@ async def _process_files_via_event_bus(
             if not pending_urls:
                 ready_event.set()
 
-    # Subscribe to FILE_READY events
     pubsub = await bus.subscribe(_on_file_ready, event_filter=FILE_READY)
 
     try:
-        # Publish FILE_UPLOADED for each file
         for f in files:
             file_id = str(uuid.uuid4())
-            # Also store file ref in Blackboard so Tonglu can find it
             await bb.set_state(session_id, f"_file:{file_id}", {
                 "url": f.url, "name": f.name, "type": f.type,
             })
@@ -516,7 +647,6 @@ async def _process_files_via_event_bus(
             await bus.publish(event)
             logger.info("Published FILE_UPLOADED: file=%s url=%s", f.name, f.url)
 
-        # Wait for all FILE_READY responses (with timeout)
         try:
             await asyncio.wait_for(ready_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -524,13 +654,11 @@ async def _process_files_via_event_bus(
                 "Timeout waiting for FILE_READY: got %d/%d files",
                 len(result), len(files),
             )
-            # Fill missing files with timeout message
             for f in files:
                 if f.url not in result:
                     result[f.url] = f"（文件 {f.name} 处理超时，请稍后重试）"
 
     finally:
-        # Cleanup subscription
         await pubsub.unsubscribe()
         await pubsub.aclose()
 
@@ -551,10 +679,7 @@ async def _call_llm(
     """
     Call DashScope Generation API with retry on transient failures.
 
-    Retries up to _LLM_MAX_RETRIES times with exponential backoff (1s, 2s, 4s)
-    for network errors (SSL, timeout, connection reset).
-
-    Returns dict with 'content', optional 'tool_calls', and optional 'search_results'.
+    Retries up to _LLM_MAX_RETRIES times with exponential backoff.
     """
 
     def _sync_call() -> Dict[str, Any]:
@@ -580,33 +705,45 @@ async def _call_llm(
             )
 
         choice = response.output.choices[0].message
+
+        def _get(obj, key, default=""):
+            """Access a field from either dict or object."""
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
         result: Dict[str, Any] = {
-            "content": getattr(choice, "content", "") or "",
+            "content": _get(choice, "content", "") or "",
             "tool_calls": [],
         }
-        if hasattr(choice, "tool_calls") and choice.tool_calls:
-            result["tool_calls"] = [
-                {
-                    "id": getattr(tc, "id", str(uuid.uuid4())),
+
+        raw_tool_calls = _get(choice, "tool_calls", None)
+        if raw_tool_calls:
+            parsed_calls = []
+            for tc in raw_tool_calls:
+                func = _get(tc, "function", {})
+                parsed_calls.append({
+                    "id": _get(tc, "id", str(uuid.uuid4())),
                     "type": "function",
                     "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
+                        "name": _get(func, "name", ""),
+                        "arguments": _get(func, "arguments", "{}"),
                     },
-                }
-                for tc in choice.tool_calls
-            ]
+                })
+            result["tool_calls"] = parsed_calls
 
-        search_info = getattr(response.output, "search_info", None)
-        if search_info and hasattr(search_info, "search_results"):
-            result["search_results"] = [
-                {
-                    "title": getattr(web, "title", ""),
-                    "url": getattr(web, "url", ""),
-                    "index": getattr(web, "index", ""),
-                }
-                for web in search_info.search_results
-            ]
+        search_info = _get(response.output, "search_info", None)
+        if search_info:
+            raw_results = _get(search_info, "search_results", None)
+            if raw_results:
+                result["search_results"] = [
+                    {
+                        "title": _get(web, "title", ""),
+                        "url": _get(web, "url", ""),
+                        "index": _get(web, "index", ""),
+                    }
+                    for web in raw_results
+                ]
 
         return result
 
@@ -653,11 +790,7 @@ def _enrich_ui_render(
     schema_version: int,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Ensure ui_render payload contains animation-friendly meta fields.
-
-    We preserve existing keys and only add missing fields.
-    """
+    """Ensure ui_render payload contains animation-friendly meta fields."""
     if not isinstance(ui_schema, dict):
         return {
             "schema_version": schema_version,
@@ -678,15 +811,10 @@ def _enrich_ui_render(
 
 
 def _result_to_ui(tool_name: str, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Build a basic ui_render payload from node result when ui_schema is absent.
-
-    This is a fallback — nodes should ideally provide their own ui_schema.
-    """
+    """Build a basic ui_render payload from node result when ui_schema is absent."""
     if not result:
         return None
 
-    # If result already has a 'type' field (our output schema convention)
     result_type = result.get("type")
     if result_type == "table":
         return {
@@ -716,7 +844,6 @@ def _result_to_ui(tool_name: str, result: Dict[str, Any]) -> Optional[Dict[str, 
             "data": result,
         }
 
-    # Generic fallback: show as JSON
     return {
         "component": "smart_table",
         "title": "执行结果",

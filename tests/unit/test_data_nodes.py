@@ -39,6 +39,41 @@ class TestDataQueryNode:
         assert len(result.result["records"]) == 2
         assert result.artifacts["query_result"] is not None
 
+        # P0 fix: last_data_query_result should be stored in Blackboard
+        stored = await bb.get_state("s1", "last_data_query_result")
+        assert stored is not None
+        assert stored["count"] == 2
+
+        # Accumulated results
+        accumulated = await bb.get_results("s1", "data_query")
+        assert len(accumulated) == 1
+        assert accumulated[0]["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_multiple_queries_accumulate(self, mock_redis):
+        """Multiple data_query calls should accumulate results."""
+        mock_client = MagicMock(spec=TongluClient)
+        mock_client.query = AsyncMock(side_effect=[
+            [{"id": "1", "name": "result_1"}],
+            [{"id": "2", "name": "result_2"}, {"id": "3", "name": "result_3"}],
+        ])
+
+        node = DataQueryNode(mock_client)
+        bb = TenantBlackboard(mock_redis, "test_tenant")
+
+        await node.execute("s1", "test_tenant", {"intent": "query 1"}, bb)
+        await node.execute("s1", "test_tenant", {"intent": "query 2"}, bb)
+
+        # last_data_query_result should be the latest
+        latest = await bb.get_state("s1", "last_data_query_result")
+        assert latest["count"] == 2
+
+        # accumulated should have both
+        accumulated = await bb.get_results("s1", "data_query")
+        assert len(accumulated) == 2
+        assert accumulated[0]["count"] == 1
+        assert accumulated[1]["count"] == 2
+
     @pytest.mark.asyncio
     async def test_query_empty_results(self, mock_redis):
         """DataQueryNode should handle empty results gracefully."""

@@ -15,8 +15,8 @@ from tempo_os.api.agent import (
     _enrich_ui_render,
     _result_to_ui,
     _tool_display_name,
-    SYSTEM_PROMPT,
 )
+from tempo_os.agents.prompt_loader import get_scene_prompt, DEFAULT_SCENE
 
 
 class TestRequestModels:
@@ -72,14 +72,16 @@ class TestCollectFiles:
 
 class TestBuildLlmMessages:
     def test_basic_messages(self):
+        prompt = get_scene_prompt(DEFAULT_SCENE)
         msgs = [UserMessage(content="你好")]
-        result = _build_llm_messages(msgs)
+        result = _build_llm_messages(msgs, prompt)
         assert result[0]["role"] == "system"
-        assert result[0]["content"] == SYSTEM_PROMPT
+        assert result[0]["content"] == prompt
         assert result[1]["role"] == "user"
         assert result[1]["content"] == "你好"
 
     def test_file_text_injection(self):
+        prompt = get_scene_prompt(DEFAULT_SCENE)
         msgs = [
             UserMessage(
                 content="请分析",
@@ -87,20 +89,21 @@ class TestBuildLlmMessages:
             )
         ]
         file_texts = {"https://oss/report.xlsx": "表格内容:\n产品A, 100元"}
-        result = _build_llm_messages(msgs, file_texts)
+        result = _build_llm_messages(msgs, prompt, file_texts)
         user_msg = result[1]["content"]
         assert "附件内容" in user_msg
         assert "report.xlsx" in user_msg
         assert "产品A" in user_msg
 
     def test_file_not_ready(self):
+        prompt = get_scene_prompt(DEFAULT_SCENE)
         msgs = [
             UserMessage(
                 content="请分析",
                 files=[FileRef(name="slow.pdf", url="https://oss/slow.pdf")],
             )
         ]
-        result = _build_llm_messages(msgs, file_texts={})
+        result = _build_llm_messages(msgs, prompt, file_texts={})
         user_msg = result[1]["content"]
         assert "处理中" in user_msg
 

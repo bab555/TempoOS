@@ -50,7 +50,8 @@ class PlatformContext:
 
     def get_blackboard(self, tenant_id: str) -> TenantBlackboard:
         """Create a tenant-scoped Blackboard."""
-        return TenantBlackboard(self.redis, tenant_id)
+        from tempo_os.core.config import settings
+        return TenantBlackboard(self.redis, tenant_id, session_ttl=settings.SESSION_TTL)
 
     def get_bus(self, tenant_id: str) -> RedisBus:
         """Create a tenant-scoped Bus."""

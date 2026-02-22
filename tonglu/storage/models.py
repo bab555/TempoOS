@@ -164,3 +164,36 @@ class DataLineage(Base):
             name="uq_tl_lineage_tenant_session_artifact",
         ),
     )
+
+
+# ── Session Snapshot（Redis ↔ PG 冷热交换）──────────────────
+
+
+class SessionSnapshot(Base):
+    """
+    Redis session 的 PG 冷存储快照。
+
+    当 session 在 Redis 中超过一定时间无活动时，由 SessionEvictor
+    将完整状态 dump 到此表；下次请求到达时从此表恢复到 Redis。
+
+    生命周期：
+      Redis 活跃 → TTL 接近过期 → Evictor dump 到 PG → Redis 自然过期
+      → 新请求到达 → Restorer 从 PG 读取 → 写回 Redis → 标记 restored_at
+    """
+
+    __tablename__ = "tl_session_snapshots"
+
+    session_id = Column(String(128), primary_key=True)
+    tenant_id = Column(String(64), nullable=False, index=True)
+    chat_history = Column(JSONB, nullable=False, default=list)
+    blackboard = Column(JSONB, nullable=False, default=dict)
+    tool_results = Column(JSONB, nullable=False, default=dict)
+    chat_summary = Column(Text, nullable=True)
+    routed_scene = Column(String(64), nullable=True)
+    archived_at = Column(DateTime(timezone=True), server_default=func.now())
+    restored_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_tl_snapshots_tenant", "tenant_id"),
+        Index("idx_tl_snapshots_archived", "archived_at"),
+    )

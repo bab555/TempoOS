@@ -293,6 +293,77 @@ class TestMultiTurnConversation:
         print("\n*** MULTI-TURN E2E PASSED ***")
 
 
+class TestChatStorePersistenceE2E:
+    """Verify that agent chat persists messages to ChatStore."""
+
+    @pytest.mark.asyncio
+    async def test_chat_history_persisted(self, mock_redis):
+        """After a chat, ChatStore should contain user + assistant messages."""
+        from tempo_os.memory.chat_store import ChatStore
+
+        app = _make_app(mock_redis)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t", timeout=120) as c:
+            events, sid = await _chat(c, [
+                {"role": "user", "content": "Hello, what can you do?"},
+            ])
+
+        assert sid
+        types = _types(events)
+        assert "done" in types
+
+        store = ChatStore(mock_redis, "smoke_e2e", ttl=3600)
+        count = await store.count(sid)
+        print(f"\n--- ChatStore messages for session {sid[:8]}...: {count} ---")
+        assert count >= 2, f"Expected at least user+assistant, got {count}"
+
+        all_msgs = await store.get_all(sid)
+        assert all_msgs[0].role == "user"
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_accumulates_history(self, mock_redis):
+        """Multi-turn chat should accumulate all messages in ChatStore."""
+        from tempo_os.memory.chat_store import ChatStore
+
+        app = _make_app(mock_redis)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t", timeout=180) as c:
+            # Turn 1
+            events1, sid = await _chat(c, [
+                {"role": "user", "content": "Remember: my project code is ALPHA-7."},
+            ])
+            assert sid
+
+            # Turn 2 (same session)
+            events2, _ = await _chat(c, [
+                {"role": "user", "content": "What is my project code?"},
+            ], session_id=sid)
+
+        store = ChatStore(mock_redis, "smoke_e2e", ttl=3600)
+        count = await store.count(sid)
+        print(f"\n--- Multi-turn ChatStore count: {count} ---")
+        # At least: user1 + assistant1 + user2 + assistant2 = 4
+        assert count >= 4, f"Expected >= 4, got {count}"
+
+    @pytest.mark.asyncio
+    async def test_route_cached_after_chat(self, mock_redis):
+        """After a chat, the routed scene should be cached in Blackboard."""
+        from tempo_os.memory.blackboard import TenantBlackboard
+
+        app = _make_app(mock_redis)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t", timeout=120) as c:
+            events, sid = await _chat(c, [
+                {"role": "user", "content": "Search for HP printer prices online"},
+            ])
+
+        assert sid
+        bb = TenantBlackboard(mock_redis, "smoke_e2e")
+        cached = await bb.get_state(sid, "_routed_scene")
+        print(f"\n--- Cached route: {cached} ---")
+        assert cached is not None and isinstance(cached, str)
+
+
 class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_empty_message(self, mock_redis):

@@ -69,6 +69,11 @@ class TestSearchNodeFull:
         stored_query = await bb.get_state("s_search_1", "last_search_query")
         assert stored_query is not None
 
+        # Verify accumulated results (append_result)
+        accumulated = await bb.get_results("s_search_1", "search")
+        assert len(accumulated) >= 1, "Accumulated search results empty"
+        print(f"  Accumulated results: {len(accumulated)}")
+
     @pytest.mark.asyncio
     async def test_general_query(self, mock_redis):
         from tempo_os.nodes.search import SearchNode

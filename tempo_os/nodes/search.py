@@ -118,9 +118,10 @@ class SearchNode(BaseNode):
         # Try to parse structured result from LLM output
         result_data = _parse_search_result(content, search_results)
 
-        # Store in Blackboard for downstream nodes
+        # Store in Blackboard: latest for quick access + accumulated for history
         await blackboard.set_state(session_id, "last_search_query", query)
         await blackboard.set_state(session_id, "last_search_result", result_data)
+        await blackboard.append_result(session_id, "search", result_data)
 
         # Build ui_schema based on result type
         ui_schema = _build_search_ui(result_data, search_results)
@@ -166,20 +167,28 @@ async def _search_call(
             )
 
         choice = response.output.choices[0].message
+
+        def _get(obj, key, default=""):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
         result: Dict[str, Any] = {
-            "content": getattr(choice, "content", "") or "",
+            "content": _get(choice, "content", "") or "",
         }
 
-        search_info = getattr(response.output, "search_info", None)
-        if search_info and hasattr(search_info, "search_results"):
-            result["search_results"] = [
-                {
-                    "title": getattr(web, "title", ""),
-                    "url": getattr(web, "url", ""),
-                    "index": getattr(web, "index", ""),
-                }
-                for web in search_info.search_results
-            ]
+        search_info = _get(response.output, "search_info", None)
+        if search_info:
+            raw_results = _get(search_info, "search_results", None)
+            if raw_results:
+                result["search_results"] = [
+                    {
+                        "title": _get(web, "title", ""),
+                        "url": _get(web, "url", ""),
+                        "index": _get(web, "index", ""),
+                    }
+                    for web in raw_results
+                ]
 
         return result
 

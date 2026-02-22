@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import select, update, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from tonglu.storage.models import DataLineage, DataRecord, DataSource, DataVector
+from tonglu.storage.models import DataLineage, DataRecord, DataSource, DataVector, SessionSnapshot
 
 logger = logging.getLogger("tonglu.repository")
 
@@ -188,4 +188,49 @@ class DataRepository:
                 record_id=record_id,
             )
             session.add(lineage)
+            await session.commit()
+
+    # ── Session Snapshot (Redis ↔ PG swap) ────────────────────
+
+    async def save_snapshot(self, snapshot: SessionSnapshot) -> None:
+        """Upsert a session snapshot (archive from Redis to PG)."""
+        async with self._session_factory() as session:
+            existing = await session.get(SessionSnapshot, snapshot.session_id)
+            if existing:
+                existing.chat_history = snapshot.chat_history
+                existing.blackboard = snapshot.blackboard
+                existing.tool_results = snapshot.tool_results
+                existing.chat_summary = snapshot.chat_summary
+                existing.routed_scene = snapshot.routed_scene
+                existing.archived_at = snapshot.archived_at
+                existing.restored_at = None
+            else:
+                session.add(snapshot)
+            await session.commit()
+
+    async def get_snapshot(self, session_id: str) -> Optional[SessionSnapshot]:
+        """Retrieve a session snapshot by session_id."""
+        async with self._session_factory() as session:
+            return await session.get(SessionSnapshot, session_id)
+
+    async def mark_snapshot_restored(self, session_id: str) -> None:
+        """Mark a snapshot as restored (set restored_at timestamp)."""
+        from datetime import datetime, timezone
+        async with self._session_factory() as session:
+            stmt = (
+                update(SessionSnapshot)
+                .where(SessionSnapshot.session_id == session_id)
+                .values(restored_at=datetime.now(timezone.utc))
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def delete_snapshot(self, session_id: str) -> None:
+        """Delete a snapshot after successful restore or cleanup."""
+        from sqlalchemy import delete as sql_delete
+        async with self._session_factory() as session:
+            stmt = sql_delete(SessionSnapshot).where(
+                SessionSnapshot.session_id == session_id,
+            )
+            await session.execute(stmt)
             await session.commit()

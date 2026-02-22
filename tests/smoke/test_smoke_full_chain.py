@@ -217,4 +217,25 @@ class TestFullBusinessChain:
             print(f"  {key}: OK")
 
         print(f"\n  Total Blackboard keys for session: {len(all_state)}")
+
+        # ============================================================
+        # Verify: Accumulated search results preserved
+        # ============================================================
+        print("\n" + "=" * 60)
+        print("VERIFY: Accumulated Results")
+        print("=" * 60)
+
+        search_accumulated = await bb.get_results(SESSION, "search")
+        print(f"  Accumulated search results: {len(search_accumulated)}")
+        assert len(search_accumulated) >= 1, "No accumulated search results"
+
+        # ============================================================
+        # Verify: Session TTL is set
+        # ============================================================
+        from tempo_os.kernel.namespace import get_key
+        session_key = get_key(TENANT, "session", SESSION)
+        ttl = await mock_redis.ttl(session_key)
+        print(f"  Session key TTL: {ttl}s")
+        assert ttl > 0, "Session key has no TTL (P0 fix not applied)"
+
         print("\n*** FULL CHAIN PASSED ***")

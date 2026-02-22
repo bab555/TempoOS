@@ -18,11 +18,13 @@ from tonglu.api.ingest import router as ingest_router
 from tonglu.api.query import router as query_router
 from tonglu.api.tasks import router as tasks_router
 from tonglu.api.oss_callback import router as oss_callback_router
+from tonglu.api.session import router as session_router
 from tonglu.config import TongluSettings
 from tonglu.parsers.registry import ParserRegistry
 from tonglu.pipeline.ingestion import IngestionPipeline
 from tonglu.query.engine import QueryEngine
 from tonglu.services.event_sink import EventSinkListener
+from tonglu.services.session_evictor import SessionEvictor
 from tonglu.services.llm_service import LLMService
 from tonglu.storage.database import Database
 from tonglu.storage.repositories import DataRepository
@@ -87,19 +89,36 @@ async def lifespan(app: FastAPI):
         await event_sink.start()
         app.state.event_sink = event_sink
 
+    # Session Evictor (optional — Redis → PG cold swap)
+    session_evictor = None
+    if settings.SESSION_EVICTOR_ENABLED:
+        session_evictor = SessionEvictor(
+            redis_url=settings.REDIS_URL,
+            repo=repo,
+            tenant_ids=settings.tenant_ids_list,
+            scan_interval=settings.SESSION_EVICTOR_SCAN_INTERVAL,
+            ttl_threshold=settings.SESSION_EVICTOR_TTL_THRESHOLD,
+        )
+        await session_evictor.start()
+        app.state.session_evictor = session_evictor
+
     logger.info(
-        "Tonglu ready — host=%s port=%d db=%s concurrent=%d event_sink=%s",
+        "Tonglu ready — host=%s port=%d db=%s concurrent=%d event_sink=%s evictor=%s",
         settings.HOST,
         settings.PORT,
         settings.DATABASE_URL.split("@")[-1] if "@" in settings.DATABASE_URL else "***",
         settings.INGESTION_MAX_CONCURRENT,
         "enabled" if event_sink else "disabled",
+        "enabled" if session_evictor else "disabled",
     )
 
     yield
 
     # ── Shutdown ──────────────────────────────────────────────
     logger.info("Tonglu shutting down...")
+
+    if session_evictor:
+        await session_evictor.stop()
 
     if event_sink:
         await event_sink.stop()
@@ -130,3 +149,4 @@ app.include_router(ingest_router)
 app.include_router(query_router)
 app.include_router(tasks_router)
 app.include_router(oss_callback_router)
+app.include_router(session_router)

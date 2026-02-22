@@ -1,7 +1,7 @@
 # Copyright (c) 2026 TempoOS Contributors. All Rights Reserved.
 """Unit tests for namespace helper."""
 
-from tempo_os.kernel.namespace import get_key, get_channel
+from tempo_os.kernel.namespace import get_key, get_channel, get_chat_key, get_results_key
 
 
 class TestNamespace:
@@ -23,3 +23,33 @@ class TestNamespace:
         c1 = get_channel("tenant_a")
         c2 = get_channel("tenant_b")
         assert c1 != c2
+
+
+class TestChatKey:
+    def test_basic(self):
+        assert get_chat_key("t_001", "abc") == "tempo:t_001:chat:abc"
+
+    def test_tenant_isolation(self):
+        k1 = get_chat_key("tenant_a", "s1")
+        k2 = get_chat_key("tenant_b", "s1")
+        assert k1 != k2
+
+    def test_session_isolation(self):
+        k1 = get_chat_key("t_001", "s1")
+        k2 = get_chat_key("t_001", "s2")
+        assert k1 != k2
+
+
+class TestResultsKey:
+    def test_basic(self):
+        assert get_results_key("t_001", "abc", "search") == "tempo:t_001:session:abc:results:search"
+
+    def test_different_tools(self):
+        k1 = get_results_key("t_001", "s1", "search")
+        k2 = get_results_key("t_001", "s1", "data_query")
+        assert k1 != k2
+
+    def test_tenant_isolation(self):
+        k1 = get_results_key("tenant_a", "s1", "search")
+        k2 = get_results_key("tenant_b", "s1", "search")
+        assert k1 != k2

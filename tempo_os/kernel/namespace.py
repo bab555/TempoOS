@@ -21,6 +21,26 @@ def get_key(tenant_id: str, resource_type: str, resource_id: str) -> str:
     return f"tempo:{tenant_id}:{resource_type}:{resource_id}"
 
 
+def get_chat_key(tenant_id: str, session_id: str) -> str:
+    """
+    Build a tenant-scoped chat history key (Redis List).
+
+    Example:
+        get_chat_key("t_001", "abc") -> "tempo:t_001:chat:abc"
+    """
+    return f"tempo:{tenant_id}:chat:{session_id}"
+
+
+def get_results_key(tenant_id: str, session_id: str, tool_name: str) -> str:
+    """
+    Build a tenant-scoped accumulated tool results key (Redis List).
+
+    Example:
+        get_results_key("t_001", "abc", "search") -> "tempo:t_001:session:abc:results:search"
+    """
+    return f"tempo:{tenant_id}:session:{session_id}:results:{tool_name}"
+
+
 def get_channel(tenant_id: str) -> str:
     """
     Build a tenant-scoped Pub/Sub channel name.

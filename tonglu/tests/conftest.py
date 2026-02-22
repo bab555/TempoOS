@@ -17,7 +17,7 @@ from tonglu.config import TongluSettings
 from tonglu.parsers.base import ParseResult
 from tonglu.parsers.registry import ParserRegistry
 from tonglu.services.llm_service import LLMService
-from tonglu.storage.models import DataRecord, DataSource, DataVector
+from tonglu.storage.models import DataRecord, DataSource, DataVector, SessionSnapshot
 from tonglu.storage.repositories import DataRepository
 
 
@@ -130,6 +130,33 @@ class MockDataRepository:
     async def save_lineage(self, tenant_id, session_id, artifact_id, record_id):
         key = f"{tenant_id}:{session_id}:{artifact_id}"
         self.lineage[key] = record_id
+
+    # ── Session Snapshot (Redis ↔ PG swap) ────────────────────
+
+    snapshots: Dict[str, SessionSnapshot] = None
+
+    def _ensure_snapshots(self):
+        if self.snapshots is None:
+            self.snapshots = {}
+
+    async def save_snapshot(self, snapshot: SessionSnapshot) -> None:
+        self._ensure_snapshots()
+        self.snapshots[snapshot.session_id] = snapshot
+
+    async def get_snapshot(self, session_id: str) -> Optional[SessionSnapshot]:
+        self._ensure_snapshots()
+        return self.snapshots.get(session_id)
+
+    async def mark_snapshot_restored(self, session_id: str) -> None:
+        self._ensure_snapshots()
+        from datetime import datetime, timezone
+        snap = self.snapshots.get(session_id)
+        if snap:
+            snap.restored_at = datetime.now(timezone.utc)
+
+    async def delete_snapshot(self, session_id: str) -> None:
+        self._ensure_snapshots()
+        self.snapshots.pop(session_id, None)
 
 
 # ── Fixtures ──────────────────────────────────────────────────

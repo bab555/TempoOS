@@ -82,6 +82,20 @@ class TongluSettings(BaseSettings):
         description="Comma-separated artifact keys to persist",
     )
 
+    # ── Session Evictor (Redis ↔ PG cold swap) ────────────────
+    SESSION_EVICTOR_ENABLED: bool = Field(
+        default=True,
+        description="Enable periodic session archival from Redis to PG",
+    )
+    SESSION_EVICTOR_SCAN_INTERVAL: int = Field(
+        default=300,
+        description="Scan interval in seconds (default 5 min)",
+    )
+    SESSION_EVICTOR_TTL_THRESHOLD: int = Field(
+        default=300,
+        description="Archive sessions with remaining TTL below this (seconds)",
+    )
+
     # ── Helpers ───────────────────────────────────────────────
 
     @property

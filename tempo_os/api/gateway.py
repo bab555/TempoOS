@@ -67,13 +67,21 @@ async def chat(
         if response.status_code != 200:
             raise RuntimeError(f"DashScope error: {response.code} - {response.message}")
         choice = response.output.choices[0].message
+        content = choice.get("content", "") if isinstance(choice, dict) else getattr(choice, "content", "")
         usage = None
-        if hasattr(response, "usage") and response.usage:
-            usage = {
-                "input_tokens": getattr(response.usage, "input_tokens", 0),
-                "output_tokens": getattr(response.usage, "output_tokens", 0),
-            }
-        return getattr(choice, "content", "") or "", usage
+        resp_usage = response.usage if hasattr(response, "usage") else None
+        if resp_usage:
+            if isinstance(resp_usage, dict):
+                usage = {
+                    "input_tokens": resp_usage.get("input_tokens", 0),
+                    "output_tokens": resp_usage.get("output_tokens", 0),
+                }
+            else:
+                usage = {
+                    "input_tokens": getattr(resp_usage, "input_tokens", 0),
+                    "output_tokens": getattr(resp_usage, "output_tokens", 0),
+                }
+        return content or "", usage
 
     last_error = None
     for attempt in range(_GW_MAX_RETRIES):

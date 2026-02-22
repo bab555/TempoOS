@@ -108,3 +108,44 @@ class TestSearchNodeExecute:
         # Check Blackboard state
         stored = await bb.get_state("s1", "last_search_result")
         assert stored is not None
+
+        # Check accumulated results (append_result)
+        accumulated = await bb.get_results("s1", "search")
+        assert len(accumulated) == 1
+        assert accumulated[0]["type"] == "table"
+
+    @pytest.mark.asyncio
+    async def test_multiple_searches_accumulate(self, mock_redis):
+        """Multiple search calls should accumulate results, not overwrite."""
+        node = SearchNode()
+        bb = TenantBlackboard(mock_redis, "test")
+
+        mock_response_1 = {
+            "content": json.dumps({"type": "text", "title": "结果1", "content": "first"}),
+            "search_results": [],
+        }
+        mock_response_2 = {
+            "content": json.dumps({"type": "text", "title": "结果2", "content": "second"}),
+            "search_results": [],
+        }
+
+        with patch("tempo_os.nodes.search._search_call", new_callable=AsyncMock) as mock_call:
+            with patch("tempo_os.nodes.search.settings") as ms:
+                ms.DASHSCOPE_API_KEY = "test-key"
+                ms.DASHSCOPE_SEARCH_MODEL = "qwen3.5-plus"
+
+                mock_call.return_value = mock_response_1
+                await node.execute("s1", "test", {"query": "query 1"}, bb)
+
+                mock_call.return_value = mock_response_2
+                await node.execute("s1", "test", {"query": "query 2"}, bb)
+
+        # last_search_result should be the latest
+        latest = await bb.get_state("s1", "last_search_result")
+        assert latest["title"] == "结果2"
+
+        # accumulated results should have both
+        accumulated = await bb.get_results("s1", "search")
+        assert len(accumulated) == 2
+        assert accumulated[0]["title"] == "结果1"
+        assert accumulated[1]["title"] == "结果2"

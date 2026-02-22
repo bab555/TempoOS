@@ -4,6 +4,13 @@
 > **日期**: 2026-02-15
 > **核心理念**: 中控模型驱动 + A2UI 可视化 + OSS 文件闭环 + SSE 流式响应
 
+## 零、服务器信息 (Server Info)
+
+前端开发请连接以下地址：
+
+- **TempoOS 主服务 (Agent/Chat/OSS)**: `http://42.121.216.117:8200`
+- **Tonglu 数据服务 (Ingest/Query)**: `http://42.121.216.117:8100` (通常仅后端内部调用，前端主要对接 TempoOS)
+
 ---
 
 ## 一、核心交互模式
@@ -32,6 +39,8 @@
 只有一个核心接口。
 
 ### POST `/api/agent/chat`
+
+**URL**: `http://42.121.216.117:8200/api/agent/chat`
 
 **Headers** (必传):
 
@@ -430,6 +439,8 @@ while (true) {
 > 说明：浏览器直传 OSS 需要短期有效的签名（policy/signature）。该签名由后端生成并返回，前端**只拿到可用字段**，不会接触 AccessKeySecret。
 
 **POST** `/api/oss/post-signature`
+
+**URL**: `http://42.121.216.117:8200/api/oss/post-signature`
 
 **Headers**:
 - `X-Tenant-Id: default`

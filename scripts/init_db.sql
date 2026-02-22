@@ -70,3 +70,18 @@ CREATE TABLE IF NOT EXISTS registry_nodes (
     status          VARCHAR(32) DEFAULT 'active',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Session Snapshots (Redis ↔ PG cold swap, managed by Tonglu SessionEvictor)
+CREATE TABLE IF NOT EXISTS tl_session_snapshots (
+    session_id      VARCHAR(128) PRIMARY KEY,
+    tenant_id       VARCHAR(64) NOT NULL,
+    chat_history    JSONB NOT NULL DEFAULT '[]',
+    blackboard      JSONB NOT NULL DEFAULT '{}',
+    tool_results    JSONB NOT NULL DEFAULT '{}',
+    chat_summary    TEXT,
+    routed_scene    VARCHAR(64),
+    archived_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    restored_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_tl_snapshots_tenant ON tl_session_snapshots(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tl_snapshots_archived ON tl_session_snapshots(archived_at);

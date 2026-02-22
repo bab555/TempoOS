@@ -5,6 +5,9 @@ Blackboard — Redis-Centric Shared State Memory.
 
 Implements the "Blackboard Pattern" with complete tenant isolation.
 All keys are namespaced: tempo:{tenant_id}:{resource_type}:{resource_id}
+
+Session keys are automatically refreshed with TTL on every write to
+prevent stale data from accumulating in Redis.
 """
 
 from __future__ import annotations
@@ -15,11 +18,12 @@ from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
-from tempo_os.kernel.namespace import get_key
+from tempo_os.kernel.namespace import get_key, get_results_key
 
 logger = logging.getLogger("tempo.blackboard")
 
 DEFAULT_ARTIFACT_TTL = 7 * 24 * 3600  # 7 days
+DEFAULT_SESSION_TTL = 1800  # 30 min, overridden by config
 
 
 class TenantBlackboard:
@@ -27,11 +31,18 @@ class TenantBlackboard:
     Tenant-scoped shared state manager backed by Redis.
 
     Every operation is automatically scoped to the bound tenant_id.
+    Session keys are refreshed with TTL on every write.
     """
 
-    def __init__(self, redis: aioredis.Redis, tenant_id: str) -> None:
+    def __init__(
+        self,
+        redis: aioredis.Redis,
+        tenant_id: str,
+        session_ttl: int = DEFAULT_SESSION_TTL,
+    ) -> None:
         self._redis = redis
         self._tenant_id = tenant_id
+        self._session_ttl = session_ttl
 
     @property
     def tenant_id(self) -> str:
@@ -50,10 +61,12 @@ class TenantBlackboard:
 
         Redis key: tempo:{tenant_id}:session:{session_id}
         Hash field: {key}
+        TTL is refreshed on every write.
         """
         redis_key = get_key(self._tenant_id, "session", session_id)
         serialized = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
         await self._redis.hset(redis_key, key, serialized)
+        await self._redis.expire(redis_key, self._session_ttl)
 
     async def get_state(
         self,
@@ -90,6 +103,45 @@ class TenantBlackboard:
         redis_key = get_key(self._tenant_id, "session", session_id)
         await self._redis.hdel(redis_key, key)
 
+    # ── Accumulated Results ──────────────────────────────────────
+
+    async def append_result(
+        self,
+        session_id: str,
+        tool_name: str,
+        data: Any,
+    ) -> int:
+        """
+        Append a tool result to an accumulated list (Redis List via RPUSH).
+
+        Unlike set_state which overwrites, this accumulates results so
+        multiple search/query calls within a ReAct loop are all preserved.
+
+        Returns the new list length.
+        """
+        redis_key = get_results_key(self._tenant_id, session_id, tool_name)
+        serialized = json.dumps(data, ensure_ascii=False)
+        length = await self._redis.rpush(redis_key, serialized)
+        await self._redis.expire(redis_key, self._session_ttl)
+        return length
+
+    async def get_results(
+        self,
+        session_id: str,
+        tool_name: str,
+        limit: int = 10,
+    ) -> List[Any]:
+        """Read accumulated tool results (most recent `limit` entries)."""
+        redis_key = get_results_key(self._tenant_id, session_id, tool_name)
+        raw_list = await self._redis.lrange(redis_key, -limit, -1)
+        results = []
+        for raw in raw_list:
+            try:
+                results.append(json.loads(raw))
+            except (json.JSONDecodeError, TypeError):
+                results.append(raw)
+        return results
+
     # ── Artifacts ───────────────────────────────────────────────
 
     async def push_artifact(
@@ -111,9 +163,9 @@ class TenantBlackboard:
             json.dumps(data, ensure_ascii=False),
             ex=ttl,
         )
-        # Track artifact in session's artifact list
         session_key = get_key(self._tenant_id, "session", f"{session_id}:artifacts")
         await self._redis.sadd(session_key, artifact_id)
+        await self._redis.expire(session_key, self._session_ttl)
 
     async def get_artifact(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve an artifact by ID."""
@@ -143,17 +195,20 @@ class TenantBlackboard:
             parts = key.split(":")
             if len(parts) >= 4:
                 sess_id = parts[3]
-                if ":" not in sess_id:  # Skip sub-keys like session:abc:artifacts
+                if ":" not in sess_id:
                     sessions.add(sess_id)
         return sorted(sessions)
 
     async def clear_session(self, session_id: str) -> None:
-        """Delete all state for a session."""
+        """Delete all state for a session (including results and artifacts list)."""
         redis_key = get_key(self._tenant_id, "session", session_id)
         await self._redis.delete(redis_key)
-        # Also clear artifacts list
         art_key = get_key(self._tenant_id, "session", f"{session_id}:artifacts")
         await self._redis.delete(art_key)
+        # Clean up accumulated results
+        for tool in ("search", "data_query"):
+            rk = get_results_key(self._tenant_id, session_id, tool)
+            await self._redis.delete(rk)
 
     # ── Signals ─────────────────────────────────────────────────
 

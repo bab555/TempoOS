@@ -59,9 +59,14 @@ class DataQueryNode(BaseNode):
                 limit=params.get("limit", 20),
             )
 
+            result_data = {"records": results, "count": len(results)}
+
+            await blackboard.set_state(session_id, "last_data_query_result", result_data)
+            await blackboard.append_result(session_id, "data_query", result_data)
+
             return NodeResult(
                 status="success",
-                result={"records": results, "count": len(results)},
+                result=result_data,
                 artifacts={"query_result": results},
                 ui_schema=self._build_table_schema(results),
             )
