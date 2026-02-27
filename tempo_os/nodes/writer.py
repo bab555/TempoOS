@@ -355,8 +355,11 @@ async def _writer_call(
             raise RuntimeError(
                 f"DashScope writer error: {response.code} - {response.message}"
             )
-        choice = response.output.choices[0].message
-        return (choice.get("content", "") if isinstance(choice, dict) else getattr(choice, "content", "")) or ""
+        msg = response.output.choices[0].message
+        try:
+            return (msg["content"] if "content" in msg else "") or ""
+        except (TypeError, KeyError):
+            return getattr(msg, "content", "") or ""
 
     last_error: Optional[Exception] = None
     for attempt in range(_WRITER_MAX_RETRIES):

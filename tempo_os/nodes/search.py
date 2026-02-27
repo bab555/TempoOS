@@ -166,26 +166,32 @@ async def _search_call(
                 f"DashScope search error: {response.code} - {response.message}"
             )
 
-        choice = response.output.choices[0].message
+        msg = response.output.choices[0].message
 
-        def _get(obj, key, default=""):
-            if isinstance(obj, dict):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
+        def _safe(obj, key, default=None):
+            try:
+                if key in obj and obj[key] is not None:
+                    return obj[key]
+            except (TypeError, KeyError):
+                pass
+            try:
+                return getattr(obj, key, default)
+            except Exception:
+                return default
 
         result: Dict[str, Any] = {
-            "content": _get(choice, "content", "") or "",
+            "content": (_safe(msg, "content", "") or ""),
         }
 
-        search_info = _get(response.output, "search_info", None)
+        search_info = _safe(response.output, "search_info", None)
         if search_info:
-            raw_results = _get(search_info, "search_results", None)
+            raw_results = _safe(search_info, "search_results", None)
             if raw_results:
                 result["search_results"] = [
                     {
-                        "title": _get(web, "title", ""),
-                        "url": _get(web, "url", ""),
-                        "index": _get(web, "index", ""),
+                        "title": _safe(web, "title", ""),
+                        "url": _safe(web, "url", ""),
+                        "index": _safe(web, "index", ""),
                     }
                     for web in raw_results
                 ]

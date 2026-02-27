@@ -348,7 +348,7 @@ async def agent_chat(
                     llm_messages.append({
                         "role": "tool",
                         "content": tool_result_text,
-                        "name": func_name,
+                        "tool_call_id": tc.get("id", ""),
                     })
 
                     # Persist tool interaction to ChatStore
@@ -704,43 +704,48 @@ async def _call_llm(
                 f"DashScope error: {response.code} - {response.message}"
             )
 
-        choice = response.output.choices[0].message
+        msg = response.output.choices[0].message
 
-        def _get(obj, key, default=""):
-            """Access a field from either dict or object."""
-            if isinstance(obj, dict):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
+        def _safe(obj, key, default=None):
+            """Safely access a field using 'in' + '[]' per DashScope SDK convention."""
+            try:
+                if key in obj and obj[key] is not None:
+                    return obj[key]
+            except (TypeError, KeyError):
+                pass
+            try:
+                return getattr(obj, key, default)
+            except Exception:
+                return default
+
+        content = _safe(msg, "content", "") or ""
 
         result: Dict[str, Any] = {
-            "content": _get(choice, "content", "") or "",
+            "content": content,
             "tool_calls": [],
         }
 
-        raw_tool_calls = _get(choice, "tool_calls", None)
-        if raw_tool_calls:
-            parsed_calls = []
-            for tc in raw_tool_calls:
-                func = _get(tc, "function", {})
-                parsed_calls.append({
-                    "id": _get(tc, "id", str(uuid.uuid4())),
+        raw_tool_calls = _safe(msg, "tool_calls", []) or []
+        for tc in raw_tool_calls:
+                func = _safe(tc, "function", {})
+                result["tool_calls"].append({
+                    "id": _safe(tc, "id", "") or str(uuid.uuid4()),
                     "type": "function",
                     "function": {
-                        "name": _get(func, "name", ""),
-                        "arguments": _get(func, "arguments", "{}"),
+                        "name": _safe(func, "name", ""),
+                        "arguments": _safe(func, "arguments", "{}"),
                     },
                 })
-            result["tool_calls"] = parsed_calls
 
-        search_info = _get(response.output, "search_info", None)
+        search_info = _safe(response.output, "search_info", None)
         if search_info:
-            raw_results = _get(search_info, "search_results", None)
+            raw_results = _safe(search_info, "search_results", None)
             if raw_results:
                 result["search_results"] = [
                     {
-                        "title": _get(web, "title", ""),
-                        "url": _get(web, "url", ""),
-                        "index": _get(web, "index", ""),
+                        "title": _safe(web, "title", ""),
+                        "url": _safe(web, "url", ""),
+                        "index": _safe(web, "index", ""),
                     }
                     for web in raw_results
                 ]

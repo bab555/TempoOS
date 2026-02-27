@@ -114,9 +114,12 @@ class ContextBuilder:
                 trimmed = self._v1_trim(old_messages)
                 llm_msgs.extend(trimmed)
 
-        # Append recent messages in full
-        for msg in recent_messages:
-            llm_msgs.append(msg.to_llm_message())
+        # Append recent messages, sanitizing tool_call/tool pairs
+        # DashScope requires every "tool" message to follow an "assistant"
+        # message with "tool_calls". Since ChatStore stores tool interactions
+        # as separate entries (tool_call assistant + tool result), we must
+        # either reconstruct valid pairs or collapse them into text summaries.
+        llm_msgs.extend(self._sanitize_recent(recent_messages))
 
         return llm_msgs
 
@@ -137,6 +140,53 @@ class ContextBuilder:
 
         boundary_user_idx = user_indices[-self._max_recent_rounds]
         return boundary_user_idx
+
+    @staticmethod
+    def _sanitize_recent(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
+        """
+        Convert recent ChatMessages to DashScope-compatible format.
+
+        DashScope requires that every message with role="tool" must immediately
+        follow an assistant message containing "tool_calls". Since ChatStore
+        stores tool interactions as flat entries, we collapse tool_call/tool
+        pairs into a single assistant text summary to avoid API errors.
+        """
+        result: List[Dict[str, Any]] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+
+            if msg.type == "tool_call" and msg.role == "assistant":
+                # Collapse tool_call assistant + following tool result(s) into
+                # a single assistant summary message
+                tool_name = msg.tool_name or "tool"
+                parts = [f"[已调用工具: {tool_name}]"]
+
+                j = i + 1
+                while j < len(messages) and messages[j].role == "tool":
+                    tool_content = messages[j].content
+                    if len(tool_content) > 500:
+                        tool_content = tool_content[:500] + "..."
+                    parts.append(f"[工具 {messages[j].tool_name or tool_name} 返回结果（摘要）]: {tool_content}")
+                    j += 1
+
+                result.append({
+                    "role": "assistant",
+                    "content": "\n".join(parts),
+                })
+                i = j
+                continue
+
+            if msg.role == "tool":
+                # Orphaned tool message without preceding tool_call — skip it
+                # to avoid DashScope InvalidParameter error
+                i += 1
+                continue
+
+            result.append(msg.to_llm_message())
+            i += 1
+
+        return result
 
     def _v1_trim(self, old_messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         """
@@ -208,8 +258,11 @@ class ContextBuilder:
                 raise RuntimeError(
                     f"Summary LLM error: {response.code} - {response.message}"
                 )
-            choice = response.output.choices[0].message
-            return (choice.get("content", "") if isinstance(choice, dict) else getattr(choice, "content", "")) or ""
+            msg = response.output.choices[0].message
+            try:
+                return (msg["content"] if "content" in msg else "") or ""
+            except (TypeError, KeyError):
+                return getattr(msg, "content", "") or ""
 
         try:
             result = await asyncio.to_thread(_sync_call)

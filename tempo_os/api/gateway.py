@@ -66,22 +66,29 @@ async def chat(
         )
         if response.status_code != 200:
             raise RuntimeError(f"DashScope error: {response.code} - {response.message}")
-        choice = response.output.choices[0].message
-        content = choice.get("content", "") if isinstance(choice, dict) else getattr(choice, "content", "")
+        msg = response.output.choices[0].message
+        try:
+            content = (msg["content"] if "content" in msg else "") or ""
+        except (TypeError, KeyError):
+            content = getattr(msg, "content", "") or ""
+
         usage = None
-        resp_usage = response.usage if hasattr(response, "usage") else None
-        if resp_usage:
-            if isinstance(resp_usage, dict):
-                usage = {
-                    "input_tokens": resp_usage.get("input_tokens", 0),
-                    "output_tokens": resp_usage.get("output_tokens", 0),
-                }
-            else:
-                usage = {
-                    "input_tokens": getattr(resp_usage, "input_tokens", 0),
-                    "output_tokens": getattr(resp_usage, "output_tokens", 0),
-                }
-        return content or "", usage
+        try:
+            resp_usage = response.usage
+            if resp_usage is not None:
+                if isinstance(resp_usage, dict):
+                    usage = {
+                        "input_tokens": resp_usage.get("input_tokens", 0),
+                        "output_tokens": resp_usage.get("output_tokens", 0),
+                    }
+                else:
+                    usage = {
+                        "input_tokens": getattr(resp_usage, "input_tokens", 0),
+                        "output_tokens": getattr(resp_usage, "output_tokens", 0),
+                    }
+        except Exception:
+            pass
+        return content, usage
 
     last_error = None
     for attempt in range(_GW_MAX_RETRIES):

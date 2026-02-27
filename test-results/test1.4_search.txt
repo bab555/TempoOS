@@ -1,0 +1,216 @@
+event: session_init
+data: {"session_id": "a484df37-f310-4c15-9acc-106ff6b6cd6e"}
+
+event: thinking
+data: {"content": "正在分析意图...", "phase": "route", "status": "running", "progress": 2}
+
+event: thinking
+data: {"content": "正在思考...", "phase": "plan", "status": "running", "progress": 5, "scene": "procurement"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 1, "mode": "delta", "role": "assistant", "content": "好的！为"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 2, "mode": "delta", "role": "assistant", "content": "了帮您精"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 3, "mode": "delta", "role": "assistant", "content": "准比价，"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 4, "mode": "delta", "role": "assistant", "content": "我需要先"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 5, "mode": "delta", "role": "assistant", "content": "确认几个"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 6, "mode": "delta", "role": "assistant", "content": "细节：\n"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 7, "mode": "delta", "role": "assistant", "content": "\n1. "}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 8, "mode": "delta", "role": "assistant", "content": "**具体"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 9, "mode": "delta", "role": "assistant", "content": "型号偏好"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 10, "mode": "delta", "role": "assistant", "content": "**：i"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 11, "mode": "delta", "role": "assistant", "content": "7有多个"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 12, "mode": "delta", "role": "assistant", "content": "代数（如"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 13, "mode": "delta", "role": "assistant", "content": "12代、"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 14, "mode": "delta", "role": "assistant", "content": "13代、"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 15, "mode": "delta", "role": "assistant", "content": "14代）"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 16, "mode": "delta", "role": "assistant", "content": "，是否有"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 17, "mode": "delta", "role": "assistant", "content": "倾向？\n"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 18, "mode": "delta", "role": "assistant", "content": "2. *"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 19, "mode": "delta", "role": "assistant", "content": "*主要用"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 20, "mode": "delta", "role": "assistant", "content": "途**："}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 21, "mode": "delta", "role": "assistant", "content": "办公/游"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 22, "mode": "delta", "role": "assistant", "content": "戏/设计"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 23, "mode": "delta", "role": "assistant", "content": "？这会影"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 24, "mode": "delta", "role": "assistant", "content": "响显卡和"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 25, "mode": "delta", "role": "assistant", "content": "屏幕需求"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 26, "mode": "delta", "role": "assistant", "content": "\n3. "}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 27, "mode": "delta", "role": "assistant", "content": "**预算"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 28, "mode": "delta", "role": "assistant", "content": "范围**"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 29, "mode": "delta", "role": "assistant", "content": "：是否有"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 30, "mode": "delta", "role": "assistant", "content": "心理价位"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 31, "mode": "delta", "role": "assistant", "content": "？\n4."}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 32, "mode": "delta", "role": "assistant", "content": " **关"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 33, "mode": "delta", "role": "assistant", "content": "键配置要"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 34, "mode": "delta", "role": "assistant", "content": "求**："}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 35, "mode": "delta", "role": "assistant", "content": "\n   "}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 36, "mode": "delta", "role": "assistant", "content": "- 内存"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 37, "mode": "delta", "role": "assistant", "content": "（16G"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 38, "mode": "delta", "role": "assistant", "content": "B/32"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 39, "mode": "delta", "role": "assistant", "content": "GB？）"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 40, "mode": "delta", "role": "assistant", "content": "\n   "}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 41, "mode": "delta", "role": "assistant", "content": "- 硬盘"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 42, "mode": "delta", "role": "assistant", "content": "（512"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 43, "mode": "delta", "role": "assistant", "content": "GB/1"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 44, "mode": "delta", "role": "assistant", "content": "TB S"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 45, "mode": "delta", "role": "assistant", "content": "SD？）"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 46, "mode": "delta", "role": "assistant", "content": "\n   "}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 47, "mode": "delta", "role": "assistant", "content": "- 屏幕"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 48, "mode": "delta", "role": "assistant", "content": "尺寸（1"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 49, "mode": "delta", "role": "assistant", "content": "4寸/1"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 50, "mode": "delta", "role": "assistant", "content": "5.6寸"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 51, "mode": "delta", "role": "assistant", "content": "/16寸"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 52, "mode": "delta", "role": "assistant", "content": "？）\n\n"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 53, "mode": "delta", "role": "assistant", "content": "若无特殊"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 54, "mode": "delta", "role": "assistant", "content": "要求，我"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 55, "mode": "delta", "role": "assistant", "content": "将按主流"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 56, "mode": "delta", "role": "assistant", "content": "办公+轻"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 57, "mode": "delta", "role": "assistant", "content": "度创作场"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 58, "mode": "delta", "role": "assistant", "content": "景（16"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 59, "mode": "delta", "role": "assistant", "content": "GB+5"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 60, "mode": "delta", "role": "assistant", "content": "12GB"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 61, "mode": "delta", "role": "assistant", "content": "+15."}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 62, "mode": "delta", "role": "assistant", "content": "6寸）为"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 63, "mode": "delta", "role": "assistant", "content": "您搜索最"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 64, "mode": "delta", "role": "assistant", "content": "新款i7"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 65, "mode": "delta", "role": "assistant", "content": "笔记本。"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 66, "mode": "delta", "role": "assistant", "content": "是否按此"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 67, "mode": "delta", "role": "assistant", "content": "默认配置"}
+
+event: message
+data: {"message_id": "49792581-0ad0-4f61-a768-f69a7cc92329", "seq": 68, "mode": "delta", "role": "assistant", "content": "进行？"}
+
+event: done
+data: {"session_id": "a484df37-f310-4c15-9acc-106ff6b6cd6e"}
+

@@ -200,8 +200,11 @@ async def route_intent(
             raise RuntimeError(
                 f"Router LLM error: {response.code} - {response.message}"
             )
-        choice = response.output.choices[0].message
-        return (choice.get("content", "") if isinstance(choice, dict) else getattr(choice, "content", "")) or ""
+        msg = response.output.choices[0].message
+        try:
+            return (msg["content"] if "content" in msg else "") or ""
+        except (TypeError, KeyError):
+            return getattr(msg, "content", "") or ""
 
     try:
         raw = await asyncio.to_thread(_sync_call)

@@ -1,0 +1,2 @@
+{"detail":"Missing tenant identification"}
+HTTP_CODE:401

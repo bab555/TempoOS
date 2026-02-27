@@ -1,0 +1,222 @@
+event: session_init
+data: {"session_id": "55a74eca-d6aa-491f-a13e-0793a7a53d75"}
+
+event: thinking
+data: {"content": "正在分析意图...", "phase": "route", "status": "running", "progress": 2}
+
+event: thinking
+data: {"content": "正在思考...", "phase": "plan", "status": "running", "progress": 5, "scene": "general"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 1, "mode": "delta", "role": "assistant", "content": "你好！我"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 2, "mode": "delta", "role": "assistant", "content": "是“数字"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 3, "mode": "delta", "role": "assistant", "content": "员工助手"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 4, "mode": "delta", "role": "assistant", "content": "”，一个"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 5, "mode": "delta", "role": "assistant", "content": "专业的企"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 6, "mode": "delta", "role": "assistant", "content": "业办公 "}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 7, "mode": "delta", "role": "assistant", "content": "AI 助"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 8, "mode": "delta", "role": "assistant", "content": "手。我可"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 9, "mode": "delta", "role": "assistant", "content": "以帮你完"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 10, "mode": "delta", "role": "assistant", "content": "成以下工"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 11, "mode": "delta", "role": "assistant", "content": "作：\n\n"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 12, "mode": "delta", "role": "assistant", "content": "1. *"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 13, "mode": "delta", "role": "assistant", "content": "*联网搜"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 14, "mode": "delta", "role": "assistant", "content": "索**："}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 15, "mode": "delta", "role": "assistant", "content": "查找产品"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 16, "mode": "delta", "role": "assistant", "content": "信息、价"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 17, "mode": "delta", "role": "assistant", "content": "格、供应"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 18, "mode": "delta", "role": "assistant", "content": "商数据等"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 19, "mode": "delta", "role": "assistant", "content": "，并生成"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 20, "mode": "delta", "role": "assistant", "content": "比价表。"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 21, "mode": "delta", "role": "assistant", "content": "\n2. "}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 22, "mode": "delta", "role": "assistant", "content": "**智能"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 23, "mode": "delta", "role": "assistant", "content": "撰写**"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 24, "mode": "delta", "role": "assistant", "content": "：根据你"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 25, "mode": "delta", "role": "assistant", "content": "的需求和"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 26, "mode": "delta", "role": "assistant", "content": "数据，自"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 27, "mode": "delta", "role": "assistant", "content": "动生成报"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 28, "mode": "delta", "role": "assistant", "content": "价表、采"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 29, "mode": "delta", "role": "assistant", "content": "购合同、"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 30, "mode": "delta", "role": "assistant", "content": "送货单、"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 31, "mode": "delta", "role": "assistant", "content": "财务报表"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 32, "mode": "delta", "role": "assistant", "content": "、技术文"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 33, "mode": "delta", "role": "assistant", "content": "档、企划"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 34, "mode": "delta", "role": "assistant", "content": "书等各类"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 35, "mode": "delta", "role": "assistant", "content": "业务文档"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 36, "mode": "delta", "role": "assistant", "content": "。\n3."}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 37, "mode": "delta", "role": "assistant", "content": " **内"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 38, "mode": "delta", "role": "assistant", "content": "部数据查"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 39, "mode": "delta", "role": "assistant", "content": "询**："}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 40, "mode": "delta", "role": "assistant", "content": "从你公司"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 41, "mode": "delta", "role": "assistant", "content": "的知识库"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 42, "mode": "delta", "role": "assistant", "content": "中检索历"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 43, "mode": "delta", "role": "assistant", "content": "史合同、"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 44, "mode": "delta", "role": "assistant", "content": "发票、商"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 45, "mode": "delta", "role": "assistant", "content": "品 SK"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 46, "mode": "delta", "role": "assistant", "content": "U 等内"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 47, "mode": "delta", "role": "assistant", "content": "部信息。"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 48, "mode": "delta", "role": "assistant", "content": "\n\n如果"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 49, "mode": "delta", "role": "assistant", "content": "你有任何"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 50, "mode": "delta", "role": "assistant", "content": "办公相关"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 51, "mode": "delta", "role": "assistant", "content": "的任务需"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 52, "mode": "delta", "role": "assistant", "content": "要协助，"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 53, "mode": "delta", "role": "assistant", "content": "比如“找"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 54, "mode": "delta", "role": "assistant", "content": "三家 A"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 55, "mode": "delta", "role": "assistant", "content": "4 打印"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 56, "mode": "delta", "role": "assistant", "content": "纸的供应"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 57, "mode": "delta", "role": "assistant", "content": "商并做比"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 58, "mode": "delta", "role": "assistant", "content": "价”或“"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 59, "mode": "delta", "role": "assistant", "content": "根据上个"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 60, "mode": "delta", "role": "assistant", "content": "月的采购"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 61, "mode": "delta", "role": "assistant", "content": "记录写一"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 62, "mode": "delta", "role": "assistant", "content": "份季度财"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 63, "mode": "delta", "role": "assistant", "content": "务简报”"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 64, "mode": "delta", "role": "assistant", "content": "，尽管告"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 65, "mode": "delta", "role": "assistant", "content": "诉我！我"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 66, "mode": "delta", "role": "assistant", "content": "会自动调"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 67, "mode": "delta", "role": "assistant", "content": "用合适的"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 68, "mode": "delta", "role": "assistant", "content": "工具，高"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 69, "mode": "delta", "role": "assistant", "content": "效完成任"}
+
+event: message
+data: {"message_id": "da17ca2f-91d9-4224-92b4-691dd8e515ed", "seq": 70, "mode": "delta", "role": "assistant", "content": "务。"}
+
+event: done
+data: {"session_id": "55a74eca-d6aa-491f-a13e-0793a7a53d75"}
+
