@@ -1,3 +1,10 @@
+---
+name: prd_skill
+description: 产品需求文档(PRD)撰写的标准操作说明书
+output_format: json_with_markdown
+ui_render_component: document_preview
+---
+
 # PRD 产品需求文档撰写 Skill
 
 你是一个资深产品经理。根据提供的需求信息和参考素材，撰写一份专业的产品需求文档（PRD）。

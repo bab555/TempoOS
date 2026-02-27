@@ -53,11 +53,16 @@ SKILL_KEYS = SHORT_FORM_SKILLS | LONG_FORM_SKILLS
 
 
 def _load_skill_prompt(skill_key: str) -> Optional[str]:
-    """Load skill prompt from file (.md for long-form, .txt for short-form)."""
+    """Load skill prompt from file and strip YAML frontmatter if present."""
     for ext in (".md", ".txt"):
         path = SKILLS_DIR / f"{skill_key}{ext}"
         if path.exists():
-            return path.read_text(encoding="utf-8").strip()
+            content = path.read_text(encoding="utf-8").strip()
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    return parts[2].strip()
+            return content
     logger.warning("Skill prompt file not found for: %s", skill_key)
     return None
 
@@ -116,6 +121,7 @@ class WriterNode(BaseNode):
         skill_key = params.get("skill", "general")
         data = params.get("data") or {}
         template_id = params.get("template_id")
+        action = params.get("action", "generate_outline")
 
         skill_prompt = _SKILL_CACHE.get(skill_key)
         if not skill_prompt:
@@ -126,7 +132,7 @@ class WriterNode(BaseNode):
 
         context_parts = await _gather_context(blackboard, session_id, template_id, data)
 
-        if not context_parts and not data:
+        if not context_parts and not data and action != "write_chapters":
             return NodeResult(
                 status="need_user_input",
                 error_message="缺少业务数据，请提供相关数据或上传文件后重试。",
@@ -149,6 +155,7 @@ class WriterNode(BaseNode):
                 model=model,
                 session_id=session_id,
                 blackboard=blackboard,
+                action=action,
             )
         else:
             return await self._execute_short_form(
@@ -213,123 +220,148 @@ class WriterNode(BaseNode):
         model: str,
         session_id: str,
         blackboard: TenantBlackboard,
+        action: str = "generate_outline",
     ) -> NodeResult:
         context_block = "\n\n---\n\n".join(context_parts) if context_parts else ""
 
-        # Step 1: Generate outline
-        outline_prompt = (
-            f"{skill_prompt}\n\n"
-            "---\n\n"
-            "现在请执行【步骤一】：根据以下需求信息生成文档大纲。\n"
-            "只输出大纲 JSON（包含 outline 数组），不要写正文。"
-        )
-        outline_messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": outline_prompt},
-            {"role": "user", "content": context_block},
-        ]
-
-        try:
-            outline_raw = await _writer_call(api_key=api_key, model=model, messages=outline_messages)
-        except Exception as e:
-            logger.error("Long-form outline generation failed: %s", e, exc_info=True)
-            return NodeResult(status="error", error_message=f"大纲生成失败: {str(e)}")
-
-        outline_data = _parse_outline(outline_raw)
-        if not outline_data:
-            logger.warning("Failed to parse outline, falling back to short-form")
-            return await self._execute_short_form(
-                skill_key, skill_prompt, context_parts, api_key, model, session_id, blackboard,
-            )
-
-        await blackboard.set_state(session_id, f"{skill_key}_outline", outline_data)
-        logger.info("Generated outline with %d chapters for skill=%s", len(outline_data), skill_key)
-
-        # Step 2: Write each chapter
-        outline_summary = json.dumps(outline_data, ensure_ascii=False, indent=2)
-        all_sections: List[Dict[str, Any]] = []
-        previous_summary = ""
-
-        for i, chapter in enumerate(outline_data):
-            chapter_title = chapter.get("title", f"第{i+1}章")
-            key_points = chapter.get("key_points", [])
-            key_points_text = "\n".join(f"- {p}" for p in key_points) if key_points else "（无具体要点）"
-
-            chapter_prompt = (
+        if action == "generate_outline":
+            # Step 1: Generate outline
+            outline_prompt = (
                 f"{skill_prompt}\n\n"
                 "---\n\n"
-                "现在请执行【步骤二】：撰写文档的一个章节。\n\n"
-                f"## 完整大纲\n```json\n{outline_summary}\n```\n\n"
-                f"## 当前要撰写的章节\n"
-                f"- 章节序号：第 {i+1} 章（共 {len(outline_data)} 章）\n"
-                f"- 章节标题：{chapter_title}\n"
-                f"- 核心要点：\n{key_points_text}\n\n"
+                "现在请执行【步骤一】：根据以下需求信息生成文档大纲。\n"
+                "只输出大纲 JSON（包含 outline 数组），不要写正文。"
             )
-            if previous_summary:
-                chapter_prompt += f"## 前文摘要\n{previous_summary}\n\n"
-
-            chapter_prompt += (
-                "## 要求\n"
-                "只撰写本章节的内容，以 Markdown 格式输出正文。\n"
-                "不要输出 JSON，不要重复大纲，只输出本章节的标题和正文。"
-            )
-
-            chapter_messages: List[Dict[str, Any]] = [
-                {"role": "system", "content": chapter_prompt},
+            outline_messages: List[Dict[str, Any]] = [
+                {"role": "system", "content": outline_prompt},
                 {"role": "user", "content": context_block},
             ]
 
             try:
-                chapter_content = await _writer_call(api_key=api_key, model=model, messages=chapter_messages)
+                outline_raw = await _writer_call(api_key=api_key, model=model, messages=outline_messages)
             except Exception as e:
-                logger.error("Chapter %d writing failed: %s", i + 1, e, exc_info=True)
-                chapter_content = f"（第 {i+1} 章 '{chapter_title}' 生成失败：{e!s}）"
+                logger.error("Long-form outline generation failed: %s", e, exc_info=True)
+                return NodeResult(status="error", error_message=f"大纲生成失败: {str(e)}")
 
-            all_sections.append({
-                "title": chapter_title,
-                "content": chapter_content or "",
-                "level": 1,
-            })
+            outline_data = _parse_outline(outline_raw)
+            if not outline_data:
+                logger.warning("Failed to parse outline, falling back to short-form")
+                return await self._execute_short_form(
+                    skill_key, skill_prompt, context_parts, api_key, model, session_id, blackboard,
+                )
 
-            # Build a running summary of completed chapters for context continuity
-            if chapter_content:
-                summary_lines = chapter_content.strip().split("\n")[:3]
-                previous_summary += f"\n### {chapter_title}\n" + "\n".join(summary_lines) + "\n..."
+            await blackboard.set_state(session_id, f"{skill_key}_outline", outline_data)
+            logger.info("Generated outline with %d chapters for skill=%s", len(outline_data), skill_key)
 
-            logger.info("Completed chapter %d/%d: %s", i + 1, len(outline_data), chapter_title)
+            # Return outline for user confirmation
+            ui_schema = {
+                "component": "outline_editor",
+                "title": _skill_title(skill_key) + " - 大纲确认",
+                "data": {"outline": outline_data, "skill": skill_key},
+                "actions": [
+                    {"label": "确认大纲并生成正文", "action_type": "confirm_outline", "payload": {"skill": skill_key}}
+                ]
+            }
+            return NodeResult(
+                status="need_user_input",
+                result={"message": "大纲已生成，等待确认"},
+                ui_schema=ui_schema,
+                artifacts={f"{skill_key}_outline": outline_data},
+            )
 
-        # Step 3: Assemble final document
-        result_data: Dict[str, Any] = {
-            "type": "document",
-            "title": _skill_title(skill_key),
-            "skill": skill_key,
-            "meta": {
-                "doc_type": skill_key,
-                "version": "1.0",
-                "author": "数字员工助手",
-                "total_chapters": len(outline_data),
-            },
-            "outline": outline_data,
-            "sections": all_sections,
-            "fields": {},
-        }
+        elif action == "write_chapters":
+            outline_data = await blackboard.get_state(session_id, f"{skill_key}_outline")
+            if not outline_data:
+                return NodeResult(status="error", error_message="未找到大纲数据，无法继续生成。")
 
-        # Try to extract title from first section or outline
-        if outline_data:
-            first_title = outline_data[0].get("title", "")
-            if first_title:
-                result_data["title"] = f"{_skill_title(skill_key)} — {first_title.split('—')[0].strip()}"
+            # Step 2: Write each chapter
+            outline_summary = json.dumps(outline_data, ensure_ascii=False, indent=2)
+            all_sections: List[Dict[str, Any]] = []
+            previous_summary = ""
 
-        artifact_key = f"{skill_key}_result"
-        await blackboard.set_state(session_id, f"last_{artifact_key}", result_data)
+            for i, chapter in enumerate(outline_data):
+                chapter_title = chapter.get("title", f"第{i+1}章")
+                key_points = chapter.get("key_points", [])
+                key_points_text = "\n".join(f"- {p}" for p in key_points) if key_points else "（无具体要点）"
 
-        ui_schema = _build_long_form_ui(result_data, skill_key)
+                chapter_prompt = (
+                    f"{skill_prompt}\n\n"
+                    "---\n\n"
+                    "现在请执行【步骤二】：撰写文档的一个章节。\n\n"
+                    f"## 完整大纲\n```json\n{outline_summary}\n```\n\n"
+                    f"## 当前要撰写的章节\n"
+                    f"- 章节序号：第 {i+1} 章（共 {len(outline_data)} 章）\n"
+                    f"- 章节标题：{chapter_title}\n"
+                    f"- 核心要点：\n{key_points_text}\n\n"
+                )
+                if previous_summary:
+                    chapter_prompt += f"## 前文摘要\n{previous_summary}\n\n"
 
-        return NodeResult(
-            status="success",
-            result=result_data,
-            ui_schema=ui_schema,
-            artifacts={artifact_key: result_data},
-        )
+                chapter_prompt += (
+                    "## 要求\n"
+                    "只撰写本章节的内容，以 Markdown 格式输出正文。\n"
+                    "不要输出 JSON，不要重复大纲，只输出本章节的标题和正文。"
+                )
+
+                chapter_messages: List[Dict[str, Any]] = [
+                    {"role": "system", "content": chapter_prompt},
+                    {"role": "user", "content": context_block},
+                ]
+
+                try:
+                    chapter_content = await _writer_call(api_key=api_key, model=model, messages=chapter_messages)
+                except Exception as e:
+                    logger.error("Chapter %d writing failed: %s", i + 1, e, exc_info=True)
+                    chapter_content = f"（第 {i+1} 章 '{chapter_title}' 生成失败：{e!s}）"
+
+                all_sections.append({
+                    "title": chapter_title,
+                    "content": chapter_content or "",
+                    "level": 1,
+                })
+
+                # Build a running summary of completed chapters for context continuity
+                if chapter_content:
+                    summary_lines = chapter_content.strip().split("\n")[:3]
+                    previous_summary += f"\n### {chapter_title}\n" + "\n".join(summary_lines) + "\n..."
+
+                logger.info("Completed chapter %d/%d: %s", i + 1, len(outline_data), chapter_title)
+
+            # Step 3: Assemble final document
+            result_data: Dict[str, Any] = {
+                "type": "document",
+                "title": _skill_title(skill_key),
+                "skill": skill_key,
+                "meta": {
+                    "doc_type": skill_key,
+                    "version": "1.0",
+                    "author": "数字员工助手",
+                    "total_chapters": len(outline_data),
+                },
+                "outline": outline_data,
+                "sections": all_sections,
+                "fields": {},
+            }
+
+            # Try to extract title from first section or outline
+            if outline_data:
+                first_title = outline_data[0].get("title", "")
+                if first_title:
+                    result_data["title"] = f"{_skill_title(skill_key)} — {first_title.split('—')[0].strip()}"
+
+            artifact_key = f"{skill_key}_result"
+            await blackboard.set_state(session_id, f"last_{artifact_key}", result_data)
+
+            ui_schema = _build_long_form_ui(result_data, skill_key)
+
+            return NodeResult(
+                status="success",
+                result=result_data,
+                ui_schema=ui_schema,
+                artifacts={artifact_key: result_data},
+            )
+        
+        return NodeResult(status="error", error_message=f"未知的撰写操作: {action}")
 
 
 # ── LLM Call with Retry ──────────────────────────────────────

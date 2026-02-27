@@ -3,14 +3,8 @@
 """
 Prompt Loader — File-based agent prompt routing system.
 
-Loads scene-specific system prompts from .md files in tempo_os/agents/.
-Provides a lightweight LLM-based router to classify user intent into
-a scene_key, then returns the corresponding prompt and tool set.
-
-Architecture:
-  1. _router.md  → intent classification prompt (used by route())
-  2. {scene}.md  → scene-specific system prompt
-  3. SCENE_TOOLS → per-scene tool subset (not all scenes need all tools)
+Loads scene-specific system prompts from .md files in tempo_os/agents/configs/.
+Supports YAML frontmatter parsing for decoupled capabilities (Agent.md).
 """
 
 from __future__ import annotations
@@ -21,61 +15,96 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger("tempo.agents.prompt_loader")
 
 AGENTS_DIR = Path(__file__).parent
+CONFIGS_DIR = AGENTS_DIR / "configs"
 
 KNOWN_SCENES = {"general", "procurement", "document_writing", "data_analysis"}
+DEFAULT_SCENE = "core_agent"  # Changed from general to core_agent
 
-DEFAULT_SCENE = "general"
+
+class AgentConfig(BaseModel):
+    name: str
+    description: str = ""
+    model: str = "qwen-max"
+    tools: List[str] = Field(default_factory=list)
+    system_prompt: str = ""
+
 
 # ── Prompt Cache ─────────────────────────────────────────────
 
-_prompt_cache: Dict[str, str] = {}
+_agent_cache: Dict[str, AgentConfig] = {}
+_router_prompt_cache: str = ""
 
 
-def _load_prompt(name: str) -> Optional[str]:
-    """Load a .md prompt file by name. Returns None if not found."""
-    path = AGENTS_DIR / f"{name}.md"
+def _parse_agent_md(content: str) -> AgentConfig:
+    """Parse a markdown file with YAML frontmatter."""
+    yaml_content = ""
+    markdown_content = content
+    
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            yaml_content = parts[1].strip()
+            markdown_content = parts[2].strip()
+            
+    try:
+        meta = yaml.safe_load(yaml_content) if yaml_content else {}
+    except yaml.YAMLError as e:
+        logger.error("Failed to parse YAML frontmatter: %s", e)
+        meta = {}
+        
+    return AgentConfig(
+        name=meta.get("name", "unknown_agent"),
+        description=meta.get("description", ""),
+        model=meta.get("model", "qwen-max"),
+        tools=meta.get("tools", []),
+        system_prompt=markdown_content
+    )
+
+
+def load_agent_config(agent_id: str) -> AgentConfig:
+    """Load agent config from configs directory, with caching."""
+    if agent_id in _agent_cache:
+        return _agent_cache[agent_id]
+        
+    path = CONFIGS_DIR / f"{agent_id}.md"
     if not path.exists():
-        logger.warning("Prompt file not found: %s", path)
-        return None
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _get_prompt(name: str) -> str:
-    """Get prompt from cache or load from disk."""
-    if name not in _prompt_cache:
-        text = _load_prompt(name)
-        if text:
-            _prompt_cache[name] = text
-    return _prompt_cache.get(name, "")
-
-
-def get_scene_prompt(scene_key: str) -> str:
-    """Return the system prompt for a given scene."""
-    if scene_key not in KNOWN_SCENES:
-        scene_key = DEFAULT_SCENE
-    prompt = _get_prompt(scene_key)
-    if not prompt:
-        prompt = _get_prompt(DEFAULT_SCENE)
-    return prompt
+        logger.warning("Agent config not found for '%s', falling back to '%s'", agent_id, DEFAULT_SCENE)
+        if agent_id != DEFAULT_SCENE:
+            return load_agent_config(DEFAULT_SCENE)
+        else:
+            return AgentConfig(name="core_agent", system_prompt="你是通用数字员工。")
+            
+    content = path.read_text(encoding="utf-8")
+    config = _parse_agent_md(content)
+    _agent_cache[agent_id] = config
+    return config
 
 
 def get_router_prompt() -> str:
     """Return the router classification prompt."""
-    return _get_prompt("_router")
+    global _router_prompt_cache
+    if not _router_prompt_cache:
+        path = AGENTS_DIR / "_router.md"
+        if path.exists():
+            _router_prompt_cache = path.read_text(encoding="utf-8").strip()
+    return _router_prompt_cache
 
 
 def reload_prompts() -> None:
     """Clear cache and force reload all prompts from disk."""
-    _prompt_cache.clear()
-    for name in ["_router"] + list(KNOWN_SCENES):
-        _load_prompt(name)
-    logger.info("Reloaded %d agent prompts", len(_prompt_cache))
+    _agent_cache.clear()
+    global _router_prompt_cache
+    _router_prompt_cache = ""
+    logger.info("Reloaded agent configs")
 
 
-# ── Tool Definitions Per Scene ───────────────────────────────
+# ── Tool Definitions ─────────────────────────────────────────
 
 _TOOL_SEARCH = {
     "type": "function",
@@ -150,23 +179,25 @@ _TOOL_DATA_QUERY = {
     },
 }
 
-ALL_TOOLS = [_TOOL_SEARCH, _TOOL_WRITER, _TOOL_DATA_QUERY]
-
-SCENE_TOOLS: Dict[str, List[Dict[str, Any]]] = {
-    "general": ALL_TOOLS,
-    "procurement": ALL_TOOLS,
-    "document_writing": ALL_TOOLS,
-    "data_analysis": ALL_TOOLS,
+_TOOL_REGISTRY = {
+    "search": _TOOL_SEARCH,
+    "writer": _TOOL_WRITER,
+    "data_query": _TOOL_DATA_QUERY,
 }
 
 
-def get_scene_tools(scene_key: str) -> List[Dict[str, Any]]:
-    """Return the tool definitions available for a given scene."""
-    return SCENE_TOOLS.get(scene_key, ALL_TOOLS)
+def get_agent_tools(tool_names: List[str]) -> List[Dict[str, Any]]:
+    """Return tool definitions by name."""
+    tools = []
+    for name in tool_names:
+        if name in _TOOL_REGISTRY:
+            tools.append(_TOOL_REGISTRY[name])
+        else:
+            logger.warning("Requested tool '%s' not found in registry", name)
+    return tools
 
 
 # ── Router ───────────────────────────────────────────────────
-
 
 async def route_intent(
     user_message: str,
@@ -174,9 +205,7 @@ async def route_intent(
     model: str,
 ) -> str:
     """
-    Classify user intent into a scene_key using a lightweight LLM call.
-
-    Falls back to DEFAULT_SCENE on any error.
+    Classify user intent into an agent_id (formerly scene_key) using a lightweight LLM call.
     """
     router_prompt = get_router_prompt()
     if not router_prompt:
@@ -215,19 +244,41 @@ async def route_intent(
                 cleaned = "\n".join(lines[1:-1]).strip()
         parsed = json.loads(cleaned)
         scene = parsed.get("scene", DEFAULT_SCENE)
-        if scene not in KNOWN_SCENES:
-            logger.warning("Router returned unknown scene '%s', using default", scene)
-            return DEFAULT_SCENE
+        
+        # Map old scene keys to new agent keys
+        scene_to_agent = {
+            "general": "core_agent",
+            "procurement": "procurement_agent",
+            "document_writing": "core_agent", # Will be mapped to a specific agent later
+            "data_analysis": "core_agent",
+        }
+        agent_id = scene_to_agent.get(scene, "core_agent")
+        
         confidence = parsed.get("confidence", 0)
-        logger.info("Route result: scene=%s confidence=%.2f", scene, confidence)
-        return scene
+        logger.info("Route result: scene=%s (mapped to %s) confidence=%.2f", scene, agent_id, confidence)
+        return agent_id
     except Exception as e:
         logger.warning("Route intent failed: %s — falling back to '%s'", e, DEFAULT_SCENE)
         return DEFAULT_SCENE
 
 
-def get_scene_config(scene_key: str) -> Tuple[str, List[Dict[str, Any]]]:
+def get_scene_config(agent_id: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Convenience: return (system_prompt, tools) for a scene in one call.
+    Convenience: return (system_prompt, tools) for an agent.
     """
-    return get_scene_prompt(scene_key), get_scene_tools(scene_key)
+    config = load_agent_config(agent_id)
+    return config.system_prompt, get_agent_tools(config.tools)
+
+def list_available_agents() -> List[Dict[str, str]]:
+    """List all available agents from configs directory."""
+    agents = []
+    if CONFIGS_DIR.exists():
+        for path in CONFIGS_DIR.glob("*.md"):
+            agent_id = path.stem
+            cfg = load_agent_config(agent_id)
+            agents.append({
+                "id": agent_id,
+                "name": cfg.name,
+                "description": cfg.description,
+            })
+    return agents

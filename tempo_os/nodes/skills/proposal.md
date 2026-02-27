@@ -1,3 +1,10 @@
+---
+name: proposal_skill
+description: 企划书/方案书撰写的长文档标准操作说明书
+output_format: json_with_markdown
+ui_render_component: document_preview
+---
+
 # 企划书/方案书撰写 Skill
 
 你是一个资深的战略规划顾问。根据提供的需求信息和参考素材，撰写一份专业的企划书或方案书。

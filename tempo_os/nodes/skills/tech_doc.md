@@ -1,3 +1,10 @@
+---
+name: tech_doc_skill
+description: 技术架构/接口文档撰写的标准操作说明书
+output_format: json_with_markdown
+ui_render_component: document_preview
+---
+
 # 技术文档撰写 Skill
 
 你是一个资深技术文档工程师。根据提供的需求信息和参考素材，撰写一份专业的技术文档。

@@ -88,12 +88,20 @@ class UserMessage(BaseModel):
 class AgentChatRequest(BaseModel):
     """Request body for POST /api/agent/chat."""
     session_id: Optional[str] = Field(None, description="Session ID (empty on first call, returned by server)")
-    messages: List[UserMessage] = Field(..., min_length=1, description="Conversation messages")
+    agent_id: Optional[str] = Field(None, description="Explicitly specify agent to bypass routing (e.g. procurement_agent)")
+    messages: List[UserMessage] = Field(default_factory=list, description="Conversation messages")
     context: Optional[Dict[str, Any]] = Field(None, description="Optional frontend context (current_page, etc.)")
+    action: Optional[Dict[str, Any]] = Field(None, description="Explicit UI action from frontend")
 
 
 # ── Endpoint ─────────────────────────────────────────────────
 
+
+@router.get("/roles")
+async def get_agent_roles():
+    """Return available agent roles for frontend UI."""
+    from tempo_os.agents.prompt_loader import list_available_agents
+    return {"data": list_available_agents()}
 
 @router.post("/chat")
 async def agent_chat(
@@ -170,16 +178,58 @@ async def agent_chat(
                         chat_ttl=settings.CHAT_HISTORY_TTL,
                     )
 
-            # ── Step 1: Persist user message ──────────────────
-            latest_user_msg = _get_latest_user_message(req.messages)
-            all_files = _collect_files(req.messages)
+            # ── Step 0.8: Handle explicit UI Action (SOP shortcut) ──
+            if req.action:
+                action_name = req.action.get("action_type") or req.action.get("name")
+                payload = req.action.get("payload", {})
+                
+                if action_name == "confirm_outline":
+                    skill_key = payload.get("skill", "proposal")
+                    
+                    yield sse_event(
+                        "thinking",
+                        {"content": "大纲已确认，正在逐章撰写正文...", "phase": "tool", "status": "running", "progress": 10},
+                    )
+                    
+                    node_result = await ctx.execute_node(
+                        node_ref="builtin://writer",
+                        session_id=session_id,
+                        tenant_id=tenant.tenant_id,
+                        params={"skill": skill_key, "action": "write_chapters"},
+                    )
+                    
+                    if node_result.ui_schema:
+                        yield sse_event(
+                            "ui_render",
+                            _enrich_ui_render(
+                                node_result.ui_schema,
+                                ui_id=ui_default_id, render_mode="replace",
+                                schema_version=1, run_id=str(uuid.uuid4()),
+                            ),
+                        )
+                    
+                    yield sse_event(
+                        "message",
+                        {
+                            "message_id": str(uuid.uuid4()), "seq": 1,
+                            "mode": "full", "role": "assistant",
+                            "content": "文档正文已为您生成完毕，您可以进行预览或下载。",
+                        },
+                    )
+                    yield sse_done(session_id)
+                    return
 
-            user_chat_msg = ChatMessage(
-                role="user",
-                content=latest_user_msg,
-                files=[{"name": f.name, "url": f.url, "type": f.type} for f in all_files] if all_files else None,
-            )
-            await chat_store.append(session_id, user_chat_msg)
+            # ── Step 1: Persist user message ──────────────────
+            latest_user_msg = _get_latest_user_message(req.messages) if req.messages else ""
+            all_files = _collect_files(req.messages) if req.messages else []
+
+            if latest_user_msg or all_files:
+                user_chat_msg = ChatMessage(
+                    role="user",
+                    content=latest_user_msg,
+                    files=[{"name": f.name, "url": f.url, "type": f.type} for f in all_files] if all_files else None,
+                )
+                await chat_store.append(session_id, user_chat_msg)
 
             # ── Step 2: Route intent (with session cache) ─────
             yield sse_event(
@@ -187,20 +237,23 @@ async def agent_chat(
                 {"content": "正在分析意图...", "phase": "route", "status": "running", "progress": 2},
             )
 
-            scene_key = await _route_with_cache(
-                bb=bb,
-                session_id=session_id,
-                user_message=latest_user_msg,
-                api_key=settings.DASHSCOPE_API_KEY,
-                model=settings.DASHSCOPE_MODEL,
-            )
+            if req.agent_id:
+                agent_id = req.agent_id
+            else:
+                agent_id = await _route_with_cache(
+                    bb=bb,
+                    session_id=session_id,
+                    user_message=latest_user_msg,
+                    api_key=settings.DASHSCOPE_API_KEY,
+                    model=settings.DASHSCOPE_MODEL,
+                )
 
-            system_prompt, scene_tools = get_scene_config(scene_key)
+            system_prompt, scene_tools = get_scene_config(agent_id)
 
             yield sse_event(
                 "thinking",
                 {"content": "正在思考...", "phase": "plan", "status": "running", "progress": 5,
-                 "scene": scene_key},
+                 "scene": agent_id},
             )
 
             # ── Step 3: Pre-process files ─────────────────────
