@@ -9,10 +9,20 @@ from __future__ import annotations
 from typing import Optional
 
 import redis.asyncio as aioredis
+from redis.backoff import ExponentialBackoff
+from redis.retry import Retry
+from redis.exceptions import (
+    ConnectionError,
+    TimeoutError,
+    BusyLoadingError,
+)
 
 from tempo_os.core.config import settings
 
 _pool: Optional[aioredis.Redis] = None
+
+_RETRY = Retry(ExponentialBackoff(cap=2, base=0.1), retries=3)
+_RETRY_ERRORS = [ConnectionError, TimeoutError, BusyLoadingError, OSError]
 
 
 async def get_redis_pool() -> aioredis.Redis:
@@ -20,6 +30,7 @@ async def get_redis_pool() -> aioredis.Redis:
     Return a singleton async Redis connection pool.
 
     Reads connection URL from TempoSettings (env-driven).
+    Uses retry-on-error so stale pool connections are transparently reconnected.
     """
     global _pool
     if _pool is None:
@@ -27,6 +38,13 @@ async def get_redis_pool() -> aioredis.Redis:
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=20,
+            health_check_interval=15,
+            retry_on_timeout=True,
+            retry_on_error=_RETRY_ERRORS,
+            retry=_RETRY,
+            socket_connect_timeout=5,
+            socket_timeout=10,
+            socket_keepalive=True,
         )
     return _pool
 

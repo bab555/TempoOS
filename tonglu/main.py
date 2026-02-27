@@ -29,6 +29,11 @@ from tonglu.services.llm_service import LLMService
 from tonglu.storage.database import Database
 from tonglu.storage.repositories import DataRepository
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger("tonglu")
 
 

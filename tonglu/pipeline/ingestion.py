@@ -13,8 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from uuid import UUID
 
 from tonglu.parsers.registry import ParserRegistry
@@ -99,9 +102,19 @@ class IngestionPipeline:
                     source.id, source_type, file_name,
                 )
 
+                # Step 1.5: Download URL content if source is a remote URL
+                actual_ref = content_ref
+                tmp_path: Optional[str] = None
+                if source_type == "url" and content_ref.startswith("http"):
+                    actual_ref, tmp_path = await self._download_url(content_ref, file_name)
+
                 # Step 2: 解析内容
-                parser = self._parsers.get_parser(file_name, source_type)
-                parse_result = await parser.parse(content_ref)
+                try:
+                    parser = self._parsers.get_parser(file_name, source_type)
+                    parse_result = await parser.parse(actual_ref)
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
                 if not parse_result.text.strip():
                     raise ValueError("Parser returned empty text")
@@ -186,6 +199,66 @@ class IngestionPipeline:
                     status="error",
                     error=str(e),
                 )
+
+    async def _download_url(self, url: str, file_name: Optional[str] = None) -> tuple[str, str]:
+        """
+        Download a URL (typically OSS) to a temp file.
+
+        For private OSS buckets, uses oss2 SDK with signed URL.
+        Returns (local_path_or_text, tmp_path).
+        """
+        parsed = urlparse(url)
+        is_oss = "aliyuncs.com" in (parsed.hostname or "")
+
+        if is_oss:
+            return await asyncio.to_thread(self._oss_download_sync, url, file_name)
+
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            suffix = os.path.splitext(file_name or "file.txt")[1] or ".txt"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+            os.write(fd, resp.content)
+            os.close(fd)
+            logger.info("Downloaded URL to %s (%d bytes)", tmp_path, len(resp.content))
+
+            if suffix in (".txt", ".md", ".csv", ".json", ".log"):
+                text = resp.content.decode("utf-8", errors="replace")
+                os.unlink(tmp_path)
+                return text, ""
+            return tmp_path, tmp_path
+
+    @staticmethod
+    def _oss_download_sync(url: str, file_name: Optional[str] = None) -> tuple[str, str]:
+        """Synchronous OSS download using oss2 SDK (runs in thread)."""
+        import oss2
+        from tonglu.config import TongluSettings
+
+        settings = TongluSettings()
+
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        bucket_name = host.split(".")[0]
+        object_key = parsed.path.lstrip("/")
+
+        endpoint = "https://" + host.replace(f"{bucket_name}.", "")
+
+        auth = oss2.Auth(settings.OSS_ACCESS_KEY_ID, settings.OSS_ACCESS_KEY_SECRET)
+        bucket = oss2.Bucket(auth, endpoint, bucket_name)
+
+        result = bucket.get_object(object_key)
+        content = result.read()
+        logger.info("OSS download: %s (%d bytes)", object_key, len(content))
+
+        suffix = os.path.splitext(file_name or object_key)[1] or ".txt"
+        if suffix in (".txt", ".md", ".csv", ".json", ".log"):
+            return content.decode("utf-8", errors="replace"), ""
+
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        os.write(fd, content)
+        os.close(fd)
+        return tmp_path, tmp_path
 
     async def process_batch(
         self, items: List[Dict[str, Any]],

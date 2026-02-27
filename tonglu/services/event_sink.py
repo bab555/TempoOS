@@ -67,7 +67,15 @@ class EventSinkListener:
     async def start(self) -> None:
         """Start the event listener as a background asyncio task."""
         self._running = True
-        self._redis = aioredis.from_url(self._redis_url, decode_responses=True)
+        self._redis = aioredis.from_url(
+            self._redis_url,
+            decode_responses=True,
+            health_check_interval=15,
+            retry_on_timeout=True,
+            socket_connect_timeout=5,
+            socket_timeout=10,
+            socket_keepalive=True,
+        )
         self._pubsub = self._redis.pubsub()
 
         # Subscribe to tenant-scoped channels

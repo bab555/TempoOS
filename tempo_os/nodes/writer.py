@@ -27,6 +27,7 @@ import dashscope
 
 from tempo_os.core.config import settings
 from tempo_os.memory.blackboard import TenantBlackboard
+from tempo_os.memory.context_builder import sanitize_urls
 from tempo_os.nodes.base import BaseNode, NodeResult
 
 logger = logging.getLogger("tempo.nodes.writer")
@@ -426,13 +427,13 @@ async def _gather_context(
     search_result = await blackboard.get_state(session_id, "last_search_result")
     if search_result:
         context_parts.append(
-            f"搜索结果数据:\n{json.dumps(search_result, ensure_ascii=False, indent=2)}"
+            f"搜索结果数据:\n{sanitize_urls(json.dumps(search_result, ensure_ascii=False, indent=2))}"
         )
 
     data_query_result = await blackboard.get_state(session_id, "last_data_query_result")
     if data_query_result:
         context_parts.append(
-            f"知识库查询结果:\n{json.dumps(data_query_result, ensure_ascii=False, indent=2)}"
+            f"知识库查询结果:\n{sanitize_urls(json.dumps(data_query_result, ensure_ascii=False, indent=2))}"
         )
 
     template_text = None

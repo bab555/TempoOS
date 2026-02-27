@@ -27,12 +27,32 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from tempo_os.memory.blackboard import TenantBlackboard
 from tempo_os.memory.chat_store import ChatMessage, ChatStore
 
 logger = logging.getLogger("tempo.context_builder")
+
+_URL_RE = re.compile(
+    r'https?://[^\s\'"<>\]\)）》」】\u0000-\u001f]{4,}',
+    re.IGNORECASE,
+)
+
+
+def sanitize_urls(text: str) -> str:
+    """Replace raw URLs with a placeholder to prevent DashScope url-parse errors.
+
+    DashScope models (especially multimodal variants) attempt to fetch or
+    validate URLs found in ``content`` fields.  Truncated or inaccessible
+    URLs cause ``InvalidParameter – url error``.  This helper replaces every
+    URL with ``[链接]`` so the semantic meaning is preserved without the
+    raw link.
+    """
+    if not text:
+        return text
+    return _URL_RE.sub("[链接]", text)
 
 SUMMARY_PROMPT = """你是一个对话摘要助手。请将以下对话历史压缩为一段简洁的摘要。
 
@@ -150,6 +170,8 @@ class ContextBuilder:
         follow an assistant message containing "tool_calls". Since ChatStore
         stores tool interactions as flat entries, we collapse tool_call/tool
         pairs into a single assistant text summary to avoid API errors.
+
+        All content is URL-sanitized to prevent DashScope ``url error``.
         """
         result: List[Dict[str, Any]] = []
         i = 0
@@ -157,14 +179,12 @@ class ContextBuilder:
             msg = messages[i]
 
             if msg.type == "tool_call" and msg.role == "assistant":
-                # Collapse tool_call assistant + following tool result(s) into
-                # a single assistant summary message
                 tool_name = msg.tool_name or "tool"
                 parts = [f"[已调用工具: {tool_name}]"]
 
                 j = i + 1
                 while j < len(messages) and messages[j].role == "tool":
-                    tool_content = messages[j].content
+                    tool_content = sanitize_urls(messages[j].content)
                     if len(tool_content) > 500:
                         tool_content = tool_content[:500] + "..."
                     parts.append(f"[工具 {messages[j].tool_name or tool_name} 返回结果（摘要）]: {tool_content}")
@@ -178,12 +198,12 @@ class ContextBuilder:
                 continue
 
             if msg.role == "tool":
-                # Orphaned tool message without preceding tool_call — skip it
-                # to avoid DashScope InvalidParameter error
                 i += 1
                 continue
 
-            result.append(msg.to_llm_message())
+            llm_msg = msg.to_llm_message()
+            llm_msg["content"] = sanitize_urls(llm_msg.get("content", ""))
+            result.append(llm_msg)
             i += 1
 
         return result
@@ -196,7 +216,7 @@ class ContextBuilder:
         trimmed: List[Dict[str, Any]] = []
         for msg in old_messages:
             if msg.role in ("user", "assistant") and msg.type == "text":
-                content = msg.content
+                content = sanitize_urls(msg.content)
                 if len(content) > 200:
                     content = content[:200] + "..."
                 trimmed.append({"role": msg.role, "content": content})
@@ -277,13 +297,17 @@ class ContextBuilder:
 
     @staticmethod
     def _format_for_summary(messages: List[ChatMessage]) -> str:
-        """Format messages into a readable text block for the summary LLM."""
+        """Format messages into a readable text block for the summary LLM.
+
+        All URLs are stripped to prevent the summary model from attempting
+        to fetch them (which triggers ``url error`` on DashScope).
+        """
         parts: List[str] = []
         for msg in messages:
             if msg.role == "user":
-                parts.append(f"用户: {msg.content[:300]}")
+                parts.append(f"用户: {sanitize_urls(msg.content[:300])}")
             elif msg.role == "assistant" and msg.type == "text":
-                parts.append(f"助手: {msg.content[:300]}")
+                parts.append(f"助手: {sanitize_urls(msg.content[:300])}")
             elif msg.role == "tool":
-                parts.append(f"[工具 {msg.tool_name or ''}]: {msg.content[:150]}")
+                parts.append(f"[工具 {msg.tool_name or ''}]: {sanitize_urls(msg.content[:150])}")
         return "\n".join(parts)

@@ -82,6 +82,28 @@ class TongluSettings(BaseSettings):
         description="Comma-separated artifact keys to persist",
     )
 
+    # ── OSS (shared with TempoOS for file download) ──────────
+    OSS_ENDPOINT: str = Field(
+        default="",
+        description="OSS endpoint (e.g. oss-cn-hangzhou.aliyuncs.com)",
+        validation_alias=AliasChoices("TONGLU_OSS_ENDPOINT", "OSS_ENDPOINT"),
+    )
+    OSS_BUCKET: str = Field(
+        default="",
+        description="OSS bucket name",
+        validation_alias=AliasChoices("TONGLU_OSS_BUCKET", "OSS_BUCKET"),
+    )
+    OSS_ACCESS_KEY_ID: str = Field(
+        default="",
+        description="OSS access key ID",
+        validation_alias=AliasChoices("TONGLU_OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_ID"),
+    )
+    OSS_ACCESS_KEY_SECRET: str = Field(
+        default="",
+        description="OSS access key secret",
+        validation_alias=AliasChoices("TONGLU_OSS_ACCESS_KEY_SECRET", "OSS_ACCESS_KEY_SECRET"),
+    )
+
     # ── Session Evictor (Redis ↔ PG cold swap) ────────────────
     SESSION_EVICTOR_ENABLED: bool = Field(
         default=True,

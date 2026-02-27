@@ -59,7 +59,7 @@ from tempo_os.agents.prompt_loader import (
     DEFAULT_SCENE,
 )
 from tempo_os.memory.chat_store import ChatMessage, ChatStore
-from tempo_os.memory.context_builder import ContextBuilder
+from tempo_os.memory.context_builder import ContextBuilder, sanitize_urls
 
 logger = logging.getLogger("tempo.api.agent")
 
@@ -277,7 +277,6 @@ async def agent_chat(
             # ── Step 4: Build LLM context via ContextBuilder ──
             llm_messages = await context_builder.build(session_id, system_prompt)
 
-            # Inject file texts into the latest user message if present
             if file_texts:
                 _inject_file_texts(llm_messages, file_texts, all_files)
 
@@ -394,17 +393,18 @@ async def agent_chat(
                     tool_result_text = json.dumps(
                         node_result.result, ensure_ascii=False,
                     )[:4000]
+
+                    llm_tool_result = sanitize_urls(tool_result_text)
                     llm_messages.append({
                         "role": "assistant", "content": content or "",
                         "tool_calls": [tc],
                     })
                     llm_messages.append({
                         "role": "tool",
-                        "content": tool_result_text,
+                        "content": llm_tool_result,
                         "tool_call_id": tc.get("id", ""),
                     })
 
-                    # Persist tool interaction to ChatStore
                     await chat_store.append_batch(session_id, [
                         ChatMessage(
                             role="assistant",
@@ -819,7 +819,10 @@ async def _call_llm(
                 )
                 await asyncio.sleep(wait)
 
-    logger.error("LLM call failed after %d attempts: %s", _LLM_MAX_RETRIES, last_error)
+    logger.error(
+        "LLM call failed after %d attempts: %s (roles=%s)",
+        _LLM_MAX_RETRIES, last_error, [m.get("role") for m in messages],
+    )
     return None
 
 
