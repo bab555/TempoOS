@@ -283,45 +283,90 @@ async def agent_chat(
             # ── Step 5: ReAct Loop ────────────────────────────
             total_tool_calls = 0
             assistant_content = ""
+            # Buffer the last ui_render; only push to client once
+            # after the entire ReAct loop finishes.
+            pending_ui_event: Optional[str] = None
 
             for react_round in range(MAX_REACT_ROUNDS):
-                response = await _call_llm(
-                    api_key=settings.DASHSCOPE_API_KEY,
-                    model=settings.DASHSCOPE_MODEL,
-                    messages=llm_messages,
-                    tools=scene_tools,
-                )
+                message_id = str(uuid.uuid4())
+                seq = 0
+                tool_calls: List[Dict[str, Any]] = []
+                content = ""
+                stream_failed = False
 
-                if response is None:
-                    yield sse_error("LLM 调用失败")
-                    yield sse_done(session_id)
-                    return
+                # Buffer stream content; only flush to client after
+                # confirming this round has no tool_calls.
+                buffered_deltas: List[str] = []
 
-                content = response.get("content", "")
-                tool_calls = response.get("tool_calls", [])
+                try:
+                    async for chunk in _call_llm_stream(
+                        api_key=settings.DASHSCOPE_API_KEY,
+                        model=settings.DASHSCOPE_MODEL,
+                        messages=llm_messages,
+                        tools=scene_tools,
+                    ):
+                        if chunk["type"] == "content_delta":
+                            buffered_deltas.append(chunk["content"])
+                        elif chunk["type"] == "finish":
+                            content = chunk.get("full_content", "")
+                            tool_calls = chunk.get("tool_calls", [])
+                except Exception as e:
+                    logger.warning("Stream LLM call failed, trying non-stream fallback: %s", e)
+                    stream_failed = True
+
+                if stream_failed:
+                    response = await _call_llm(
+                        api_key=settings.DASHSCOPE_API_KEY,
+                        model=settings.DASHSCOPE_MODEL,
+                        messages=llm_messages,
+                        tools=scene_tools,
+                    )
+                    if response is None:
+                        # Preserve the latest successful UI even if the
+                        # follow-up LLM round fails.
+                        if pending_ui_event is not None:
+                            yield pending_ui_event
+                        yield sse_error("LLM 调用失败")
+                        yield sse_done(session_id)
+                        return
+                    content = response.get("content", "")
+                    tool_calls = response.get("tool_calls", [])
 
                 if not tool_calls:
-                    assistant_content = content or ""
-                    if assistant_content:
-                        message_id = str(uuid.uuid4())
-                        seq = 0
-                        for chunk in _chunk_text(assistant_content):
+                    # ── Final text reply: flush buffered deltas ──
+                    if buffered_deltas:
+                        for delta in buffered_deltas:
                             seq += 1
                             yield sse_event(
                                 "message",
                                 {
                                     "message_id": message_id, "seq": seq,
                                     "mode": "delta", "role": "assistant",
-                                    "content": chunk,
+                                    "content": delta,
                                 },
                             )
-                    # Persist immediately before break
+                        assistant_content = "".join(buffered_deltas)
+                    elif content:
+                        yield sse_event(
+                            "message",
+                            {
+                                "message_id": message_id, "seq": 1,
+                                "mode": "full", "role": "assistant",
+                                "content": content,
+                            },
+                        )
+                        assistant_content = content
+                    else:
+                        assistant_content = ""
+
                     await chat_store.append(session_id, ChatMessage(
                         role="assistant",
                         content=assistant_content or "(completed)",
                     ))
                     break
 
+                # ── Tool call round ──────────────────────────
+                tool_observations: List[Dict[str, str]] = []
                 for tc in tool_calls:
                     total_tool_calls += 1
                     func_name = tc["function"]["name"]
@@ -369,8 +414,11 @@ async def agent_chat(
                         },
                     )
 
+                    # Buffer ui_render instead of pushing immediately.
+                    # Each new tool overwrites the buffer so only the
+                    # last tool's UI is sent to the client.
                     if node_result.ui_schema:
-                        yield sse_event(
+                        pending_ui_event = sse_event(
                             "ui_render",
                             _enrich_ui_render(
                                 node_result.ui_schema,
@@ -381,7 +429,7 @@ async def agent_chat(
                     elif node_result.result:
                         ui_data = _result_to_ui(func_name, node_result.result)
                         if ui_data:
-                            yield sse_event(
+                            pending_ui_event = sse_event(
                                 "ui_render",
                                 _enrich_ui_render(
                                     ui_data,
@@ -395,14 +443,9 @@ async def agent_chat(
                     )[:4000]
 
                     llm_tool_result = sanitize_urls(tool_result_text)
-                    llm_messages.append({
-                        "role": "assistant", "content": content or "",
-                        "tool_calls": [tc],
-                    })
-                    llm_messages.append({
-                        "role": "tool",
-                        "content": llm_tool_result,
+                    tool_observations.append({
                         "tool_call_id": tc.get("id", ""),
+                        "tool_content": llm_tool_result,
                     })
 
                     await chat_store.append_batch(session_id, [
@@ -420,6 +463,21 @@ async def agent_chat(
                             tool_call_id=tc.get("id"),
                         ),
                     ])
+
+                # For one assistant turn containing multiple tool_calls,
+                # keep the OpenAI-compatible structure: one assistant with
+                # full tool_calls list, followed by one tool message per id.
+                llm_messages.append({
+                    "role": "assistant",
+                    "content": content or "",
+                    "tool_calls": tool_calls,
+                })
+                for obs in tool_observations:
+                    llm_messages.append({
+                        "role": "tool",
+                        "content": obs["tool_content"],
+                        "tool_call_id": obs["tool_call_id"],
+                    })
 
                 yield sse_event(
                     "thinking",
@@ -445,21 +503,14 @@ async def agent_chat(
                         "content": assistant_content,
                     },
                 )
+                await chat_store.append(session_id, ChatMessage(
+                    role="assistant",
+                    content=assistant_content,
+                ))
 
-            # ── Step 6: Persist assistant response ────────────
-            final_text = assistant_content or ""
-            if final_text:
-                await chat_store.append(session_id, ChatMessage(
-                    role="assistant",
-                    content=final_text,
-                ))
-            else:
-                # LLM returned empty content (edge case) — still persist
-                # a placeholder so multi-turn history stays consistent
-                await chat_store.append(session_id, ChatMessage(
-                    role="assistant",
-                    content="（已完成处理）",
-                ))
+            # ── Flush the single buffered ui_render ──────────
+            if pending_ui_event is not None:
+                yield pending_ui_event
 
             yield sse_done(session_id)
 
@@ -672,6 +723,7 @@ async def _process_files_via_event_bus(
         if url in pending_urls:
             result[url] = text
             pending_urls.discard(url)
+            logger.info("FILE_READY received: file_url=%s text_len=%d remaining=%d", url, len(text), len(pending_urls))
             if not pending_urls:
                 ready_event.set()
 
@@ -721,6 +773,19 @@ async def _process_files_via_event_bus(
 _LLM_MAX_RETRIES = 3
 
 
+def _safe(obj: Any, key: str, default: Any = None) -> Any:
+    """Safely access a field using 'in' + '[]' per DashScope SDK convention."""
+    try:
+        if key in obj and obj[key] is not None:
+            return obj[key]
+    except (TypeError, KeyError):
+        pass
+    try:
+        return getattr(obj, key, default)
+    except Exception:
+        return default
+
+
 async def _call_llm(
     api_key: str,
     model: str,
@@ -730,9 +795,8 @@ async def _call_llm(
     search_options: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Call DashScope Generation API with retry on transient failures.
-
-    Retries up to _LLM_MAX_RETRIES times with exponential backoff.
+    Non-streaming DashScope call. Used inside the ReAct loop when we need
+    the complete response to decide whether tool_calls are present.
     """
 
     def _sync_call() -> Dict[str, Any]:
@@ -758,19 +822,6 @@ async def _call_llm(
             )
 
         msg = response.output.choices[0].message
-
-        def _safe(obj, key, default=None):
-            """Safely access a field using 'in' + '[]' per DashScope SDK convention."""
-            try:
-                if key in obj and obj[key] is not None:
-                    return obj[key]
-            except (TypeError, KeyError):
-                pass
-            try:
-                return getattr(obj, key, default)
-            except Exception:
-                return default
-
         content = _safe(msg, "content", "") or ""
 
         result: Dict[str, Any] = {
@@ -780,15 +831,15 @@ async def _call_llm(
 
         raw_tool_calls = _safe(msg, "tool_calls", []) or []
         for tc in raw_tool_calls:
-                func = _safe(tc, "function", {})
-                result["tool_calls"].append({
-                    "id": _safe(tc, "id", "") or str(uuid.uuid4()),
-                    "type": "function",
-                    "function": {
-                        "name": _safe(func, "name", ""),
-                        "arguments": _safe(func, "arguments", "{}"),
-                    },
-                })
+            func = _safe(tc, "function", {})
+            result["tool_calls"].append({
+                "id": _safe(tc, "id", "") or str(uuid.uuid4()),
+                "type": "function",
+                "function": {
+                    "name": _safe(func, "name", ""),
+                    "arguments": _safe(func, "arguments", "{}"),
+                },
+            })
 
         search_info = _safe(response.output, "search_info", None)
         if search_info:
@@ -826,11 +877,149 @@ async def _call_llm(
     return None
 
 
-def _chunk_text(text: str, chunk_size: int = 4) -> List[str]:
-    """Split text into small chunks for simulated streaming effect."""
-    if not text:
-        return []
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+async def _call_llm_stream(
+    api_key: str,
+    model: str,
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict]] = None,
+    enable_search: bool = False,
+    search_options: Optional[Dict[str, Any]] = None,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    Streaming DashScope call with stream=True + incremental_output=True.
+
+    Yields dicts with keys:
+      - "type": "content_delta" | "tool_call_delta" | "finish"
+      - "content": str (for content_delta)
+      - "tool_calls": list (for finish, assembled tool_calls)
+      - "full_content": str (for finish, accumulated text)
+      - "search_results": list (for finish, if available)
+
+    The caller can yield SSE events as content_delta chunks arrive,
+    giving the frontend a real-time typing effect.
+    """
+    import queue
+    import threading
+
+    chunk_queue: queue.Queue = queue.Queue()
+    error_holder: List[Optional[Exception]] = [None]
+
+    def _stream_worker() -> None:
+        try:
+            import dashscope
+
+            kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "api_key": api_key,
+                "result_format": "message",
+                "stream": True,
+                "incremental_output": True,
+            }
+            if tools:
+                kwargs["tools"] = tools
+            if enable_search:
+                kwargs["enable_search"] = True
+                if search_options:
+                    kwargs["search_options"] = search_options
+
+            responses = dashscope.Generation.call(**kwargs)
+
+            accumulated_content = ""
+            assembled_tool_calls: Dict[int, Dict[str, Any]] = {}
+            last_search_info = None
+
+            for resp in responses:
+                if resp.status_code != 200:
+                    error_holder[0] = RuntimeError(
+                        f"DashScope stream error: {resp.code} - {resp.message}"
+                    )
+                    break
+
+                choice = resp.output.choices[0]
+                msg = choice.message
+                delta_content = _safe(msg, "content", "") or ""
+                delta_tool_calls = _safe(msg, "tool_calls", None)
+
+                si = _safe(resp.output, "search_info", None)
+                if si:
+                    last_search_info = si
+
+                if delta_content:
+                    accumulated_content += delta_content
+                    chunk_queue.put({
+                        "type": "content_delta",
+                        "content": delta_content,
+                    })
+
+                if delta_tool_calls:
+                    for tc_chunk in delta_tool_calls:
+                        idx = _safe(tc_chunk, "index", 0) or 0
+                        if idx not in assembled_tool_calls:
+                            assembled_tool_calls[idx] = {
+                                "id": _safe(tc_chunk, "id", "") or "",
+                                "type": "function",
+                                "function": {
+                                    "name": "",
+                                    "arguments": "",
+                                },
+                            }
+                        entry = assembled_tool_calls[idx]
+                        tc_id = _safe(tc_chunk, "id", "")
+                        if tc_id:
+                            entry["id"] = tc_id
+                        func = _safe(tc_chunk, "function", None)
+                        if func:
+                            fn_name = _safe(func, "name", "")
+                            fn_args = _safe(func, "arguments", "") or ""
+                            if fn_name:
+                                entry["function"]["name"] = fn_name
+                            entry["function"]["arguments"] += fn_args
+
+            finish_payload: Dict[str, Any] = {
+                "type": "finish",
+                "full_content": accumulated_content,
+                "tool_calls": [],
+            }
+
+            for idx in sorted(assembled_tool_calls.keys()):
+                tc = assembled_tool_calls[idx]
+                if not tc["id"]:
+                    tc["id"] = str(uuid.uuid4())
+                finish_payload["tool_calls"].append(tc)
+
+            if last_search_info:
+                raw_results = _safe(last_search_info, "search_results", None)
+                if raw_results:
+                    finish_payload["search_results"] = [
+                        {
+                            "title": _safe(web, "title", ""),
+                            "url": _safe(web, "url", ""),
+                            "index": _safe(web, "index", ""),
+                        }
+                        for web in raw_results
+                    ]
+
+            chunk_queue.put(finish_payload)
+
+        except Exception as e:
+            error_holder[0] = e
+        finally:
+            chunk_queue.put(None)
+
+    thread = threading.Thread(target=_stream_worker, daemon=True)
+    thread.start()
+
+    while True:
+        while chunk_queue.empty():
+            await asyncio.sleep(0.02)
+        item = chunk_queue.get()
+        if item is None:
+            break
+        yield item
+
+    if error_holder[0] is not None:
+        raise error_holder[0]
 
 
 def _tool_display_name(tool_name: str) -> str:

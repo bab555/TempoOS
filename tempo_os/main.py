@@ -48,6 +48,11 @@ from tempo_os.runtime.tonglu_client import TongluClient
 # Flow loader
 from tempo_os.kernel.flow_loader import load_flow_from_yaml
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger("tempo.main")
 
 

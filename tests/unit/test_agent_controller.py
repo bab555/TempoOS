@@ -10,7 +10,6 @@ from tempo_os.api.agent import (
     FileRef,
     UserMessage,
     _build_llm_messages,
-    _chunk_text,
     _collect_files,
     _enrich_ui_render,
     _result_to_ui,
@@ -107,22 +106,6 @@ class TestBuildLlmMessages:
         user_msg = result[1]["content"]
         assert "处理中" in user_msg
 
-
-class TestChunkText:
-    def test_empty(self):
-        assert _chunk_text("") == []
-
-    def test_short_text(self):
-        chunks = _chunk_text("abcd", chunk_size=4)
-        assert chunks == ["abcd"]
-
-    def test_split(self):
-        chunks = _chunk_text("abcdefghij", chunk_size=3)
-        assert chunks == ["abc", "def", "ghi", "j"]
-
-    def test_chinese(self):
-        chunks = _chunk_text("你好世界", chunk_size=2)
-        assert chunks == ["你好", "世界"]
 
 
 class TestToolDisplayName:
